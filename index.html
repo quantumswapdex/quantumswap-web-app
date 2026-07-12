@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en" data-theme="violet">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon-96.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="QuantumSwap Web App (Beta/Test Version) - a decentralized exchange for the QuantumCoin network."
+    />
+    <!--
+      Defense-in-depth CSP. Fully self-contained: no external CSS/font/image
+      hosts. 'unsafe-inline' is required for the preloader bootstrap + Vite/Tailwind
+      injected styles; scripts are same-origin only. connect-src is intentionally
+      'self' because all chain traffic is proxied by the browser extension
+      (window.quantumcoin), never fetched by this page directly.
+      Note: 'frame-ancestors' / X-Frame-Options only work as HTTP response headers
+      (ignored in a <meta> tag), so set them at the host/CDN for clickjacking
+      protection rather than here.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <title>QuantumSwap Web App (Beta/Test Version)</title>
+    <style>
+      /* Preloader paints before any bundle executes (zero-dependency, on-brand).
+         Uses a self-contained system font stack so there is no external request. */
+      #qs-preloader {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #050508;
+        color: #e0e0e6;
+        font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        transition: opacity 0.5s ease;
+      }
+      #qs-preloader.qs-hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #qs-preloader .qs-orb {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(120px);
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      #qs-preloader .qs-orb-1 {
+        width: 340px;
+        height: 340px;
+        background: #6c3bff;
+        top: 18%;
+        left: 14%;
+      }
+      #qs-preloader .qs-orb-2 {
+        width: 300px;
+        height: 300px;
+        background: #00e5ff;
+        bottom: 16%;
+        right: 16%;
+      }
+      #qs-preloader .qs-logo {
+        width: 72px;
+        height: 72px;
+        border-radius: 20px;
+        z-index: 1;
+        box-shadow: 0 0 40px -6px rgba(108, 59, 255, 0.8);
+      }
+      #qs-preloader .qs-brand {
+        font-size: 1.6rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        z-index: 1;
+      }
+      #qs-preloader .qs-brand span {
+        color: #c084fc;
+      }
+      #qs-preloader .qs-text {
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 0.95rem;
+        color: rgba(255, 255, 255, 0.55);
+        z-index: 1;
+      }
+      #qs-preloader .qs-bar {
+        position: relative;
+        width: min(360px, 74vw);
+        height: 8px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+        z-index: 1;
+      }
+      #qs-progress {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 100%;
+        width: 0%;
+        border-radius: 9999px;
+        background: linear-gradient(90deg, #6c3bff, #00e5ff);
+        box-shadow: 0 0 20px -2px rgba(108, 59, 255, 0.7);
+        transition: width 0.25s ease;
+      }
+      #qs-percent {
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 0.8rem;
+        color: rgba(255, 255, 255, 0.4);
+        z-index: 1;
+      }
+      .qs-beta-tag {
+        z-index: 1;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: rgba(255, 255, 255, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 3px 10px;
+        border-radius: 9999px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="qs-preloader" role="status" aria-live="polite">
+      <div class="qs-orb qs-orb-1"></div>
+      <div class="qs-orb qs-orb-2"></div>
+      <img class="qs-logo" src="/icon-128.jpg" alt="QuantumSwap" width="72" height="72" />
+      <div class="qs-brand">Quantum<span>Swap</span></div>
+      <div class="qs-bar"><div id="qs-progress"></div></div>
+      <div id="qs-percent">0%</div>
+      <div class="qs-text">QuantumSwap Web App is loading...</div>
+      <div class="qs-beta-tag">Beta / Test Version</div>
+    </div>
+
+    <div id="root"></div>
+
+    <script>
+      // Preloader progress controller. Kept in a classic inline script so it runs
+      // before the module bundle and can observe/steer download progress.
+      (function () {
+        var barEl = document.getElementById("qs-progress");
+        var pctEl = document.getElementById("qs-percent");
+        var preEl = document.getElementById("qs-preloader");
+        var shown = 0;
+        var done = false;
+
+        function render(p) {
+          var clamped = Math.max(0, Math.min(100, Math.round(p)));
+          // Monotonic: never move the bar backwards.
+          if (clamped < shown && !done) return;
+          shown = clamped;
+          if (barEl) barEl.style.width = clamped + "%";
+          if (pctEl) pctEl.textContent = clamped + "%";
+        }
+
+        function finish() {
+          if (done) return;
+          done = true;
+          render(100);
+          if (preEl) {
+            preEl.classList.add("qs-hide");
+            setTimeout(function () {
+              if (preEl && preEl.parentNode) preEl.parentNode.removeChild(preEl);
+            }, 600);
+          }
+        }
+
+        window.__qsHidePreloader = finish;
+
+        var chunks = Array.isArray(window.__QS_CHUNKS__) ? window.__QS_CHUNKS__ : [];
+
+        if (chunks.length) {
+          // Production path: byte-accurate progress by streaming each known chunk.
+          var totalBytes = chunks.reduce(function (a, c) {
+            return a + (c.bytes || 0);
+          }, 0) || 1;
+          var loaded = 0;
+
+          function pumpToBar() {
+            // Reserve the last 6% for app mount + Initialize().
+            render((loaded / totalBytes) * 94);
+          }
+
+          function loadChunk(chunk) {
+            return fetch(chunk.url, { credentials: "same-origin" })
+              .then(function (res) {
+                if (!res.body || !res.body.getReader) {
+                  loaded += chunk.bytes || 0;
+                  pumpToBar();
+                  return;
+                }
+                var reader = res.body.getReader();
+                return (function read() {
+                  return reader.read().then(function (r) {
+                    if (r.done) return;
+                    loaded += r.value ? r.value.length : 0;
+                    pumpToBar();
+                    return read();
+                  });
+                })();
+              })
+              .catch(function () {
+                loaded += chunk.bytes || 0;
+                pumpToBar();
+              });
+          }
+
+          Promise.all(chunks.map(loadChunk)).then(function () {
+            render(94);
+          });
+        } else {
+          // Dev / fallback path: advance from real resource-timing entries, with an
+          // asymptotic ease so the bar never stalls, capped until the app mounts.
+          var seen = 0;
+          function bump() {
+            seen++;
+            // Asymptotic curve approaching ~90%.
+            render(90 * (1 - Math.pow(0.82, seen)));
+          }
+          try {
+            var po = new PerformanceObserver(function (list) {
+              list.getEntries().forEach(function (e) {
+                if (e.initiatorType === "script" || e.initiatorType === "link" || e.initiatorType === "css" || e.initiatorType === "fetch") {
+                  bump();
+                }
+              });
+            });
+            po.observe({ type: "resource", buffered: true });
+          } catch (_e) {
+            // No PerformanceObserver: gentle timed ease.
+            var t = 0;
+            var iv = setInterval(function () {
+              t++;
+              render(90 * (1 - Math.pow(0.9, t)));
+              if (done) clearInterval(iv);
+            }, 250);
+          }
+        }
+
+        // The app signals readiness after the shell mounts and Initialize() resolves.
+        window.addEventListener("qs:app-ready", finish);
+        // Hard safety timeout so we never trap the user on the splash.
+        setTimeout(finish, 15000);
+      })();
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

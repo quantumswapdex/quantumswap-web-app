@@ -1,0 +1,28 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+coverage
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Playwright
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+# Generated screenshots from the ad-hoc e2e/_*.mjs visual-check scripts
+/e2e/_shots
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.log
+npm-debug.log*
