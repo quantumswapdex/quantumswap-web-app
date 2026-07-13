@@ -5,6 +5,9 @@ dist-ssr
 .vite
 coverage
 
+# Solidity / abigen build artifacts (dev only; ABI + bytecode are hardcoded in src/lib/createdToken.ts)
+/build
+
 # Env / secrets
 .env
 .env.*

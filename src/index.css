@@ -1189,6 +1189,90 @@ main {
   transform: none;
 }
 
+/* ---------- Multi-step transaction dialog ---------- */
+.tx-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tx-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.78);
+}
+.tx-step .tx-badge {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+.tx-step .tx-label {
+  flex: 1;
+}
+.tx-step.s-active {
+  background: rgba(155, 115, 255, 0.14);
+  border-color: rgba(155, 115, 255, 0.6);
+  color: #fff;
+}
+.tx-step.s-active .tx-badge {
+  background: rgba(155, 115, 255, 0.35);
+  color: #fff;
+}
+.tx-step.s-signing {
+  background: rgba(155, 115, 255, 0.1);
+  border-color: rgba(155, 115, 255, 0.45);
+  color: #fff;
+}
+.tx-step.s-signing .tx-badge {
+  background: rgba(155, 115, 255, 0.35);
+  color: #fff;
+  animation: qs-spin 1.6s linear infinite;
+}
+.tx-step.s-confirming .tx-badge {
+  background: rgba(155, 115, 255, 0.25);
+}
+.tx-step.s-done {
+  color: rgba(255, 255, 255, 0.6);
+}
+.tx-step.s-done .tx-badge {
+  background: rgba(52, 211, 153, 0.22);
+  color: var(--green);
+}
+.tx-step.s-failed .tx-badge {
+  background: rgba(248, 113, 113, 0.22);
+  color: #f87171;
+}
+.tx-step.s-failed .tx-label {
+  color: #f87171;
+}
+.tx-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #8c64ff;
+  animation: qs-spin 0.9s linear infinite;
+  pointer-events: none;
+  vertical-align: middle;
+}
+
 /* ---------- Toast (bottom-right stack) ---------- */
 .toast-stack {
   position: fixed;

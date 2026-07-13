@@ -17,22 +17,34 @@ function provider(): QuantumCoinProvider {
 }
 
 export interface SendTxParams {
-  to: string;
+  /** Recipient contract. Omit (undefined) to deploy a new contract. */
+  to?: string;
   data: string;
   value?: bigint;
   abi: readonly unknown[];
+  /**
+   * Creation bytecode (0x-prefixed, no constructor args) for a contract
+   * deployment. The extension requires this to verify the deploy tx: it
+   * strips the bytecode prefix from `data`, decodes the constructor args via
+   * `abi`, re-encodes, and byte-compares. Without it the extension rejects an
+   * unverifiable deployment. Ignored for calls to existing contracts.
+   */
+  bytecode?: string;
 }
 
 /** Submit a transaction through the wallet approval popup. Returns the txHash. */
 export async function sendTx(params: SendTxParams): Promise<string> {
+  const txParams: Record<string, unknown> = {
+    data: params.data,
+    value: toHexWei(params.value ?? 0n),
+    abi: params.abi,
+  };
+  // Omitting `to` signals a contract deployment to the extension.
+  if (params.to) txParams.to = params.to;
+  if (params.bytecode) txParams.bytecode = params.bytecode;
   const res = await provider().request({
     method: "qc_sendTransaction",
-    params: {
-      to: params.to,
-      data: params.data,
-      value: toHexWei(params.value ?? 0n),
-      abi: params.abi,
-    },
+    params: txParams,
   });
   const txHash = sanitizeTxHash((res as { txHash?: unknown } | null)?.txHash);
   if (!txHash) throw new Error("Wallet did not return a transaction hash");
@@ -64,6 +76,12 @@ export async function waitForReceipt(
     await sleep(intervalMs);
   }
   return null;
+}
+
+/** Resolve once a transaction is mined and successful; reject otherwise. */
+export async function waitForReceiptSuccess(hash: string): Promise<void> {
+  const receipt = await waitForReceipt(hash);
+  if (!receipt || receipt.status !== 1) throw new Error("Transaction was not confirmed on-chain");
 }
 
 function sleep(ms: number): Promise<void> {

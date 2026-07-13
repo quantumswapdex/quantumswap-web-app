@@ -2,16 +2,15 @@
 
 import { clear, el } from "../ui/dom";
 import type { ViewResult } from "../ui/router";
-import { errText } from "./shared";
 import { chevronDownIcon, coinIcon } from "../ui/components/icons";
-import { showToast } from "../ui/components/toast";
 import { trackTxToast } from "../ui/components/txToast";
+import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import { NATIVE_TOKEN, WQ_TOKEN, FACTORY_ADDRESS, type TokenInfo } from "../config/chain";
 import { FACTORY_ABI, encodeFactory } from "../lib/contracts";
 import { openTokenSelector } from "../tokens/tokenSelector";
 import { toPathAddress } from "../tokens/tokenList";
-import { sendTx } from "../lib/tx";
-import { onTxSettled, recordTx } from "../lib/txStore";
+import { sendTx, waitForReceiptSuccess } from "../lib/tx";
+import { recordTx } from "../lib/txStore";
 import { connectWallet, walletStore } from "../wallet/wallet";
 import { resolvePairAddress } from "../lib/pairRegistry";
 
@@ -92,29 +91,43 @@ export function createPairView(): ViewResult {
     }
   }
 
-  async function doCreate(): Promise<void> {
+  function doCreate(): void {
     if (!tokenA || !tokenB) return;
     submitting = true;
     void render();
-    try {
-      const data = encodeFactory("createPair", [toPathAddress(tokenA), toPathAddress(tokenB)]);
-      const hash = await sendTx({ to: FACTORY_ADDRESS, data, value: 0n, abi: FACTORY_ABI });
-      recordTx(hash, `Create pair ${tokenA.symbol}/${tokenB.symbol}`);
-      trackTxToast(
-        hash,
-        "pair",
-        { pending: "Creating pair", success: "Pair created", failure: "Create pair failed" },
-        `${tokenA.symbol}/${tokenB.symbol}`,
-      );
-      // Re-render once the tx settles so the "pair already exists" state and
-      // the CTA reflect the on-chain result.
-      onTxSettled(hash, () => void render());
-    } catch (err) {
-      showToast({ kind: "error", title: "Create pair failed", message: errText(err), autoDismissMs: 7000 });
-    } finally {
-      submitting = false;
-      void render();
-    }
+    openTxStepsDialog({
+      title: "Create pair",
+      buildSteps: () => buildCreateSteps(),
+      onClose: () => {
+        submitting = false;
+        void render();
+      },
+    });
+  }
+
+  async function buildCreateSteps(): Promise<TxStep[]> {
+    if (!tokenA || !tokenB) return [];
+    return [
+      {
+        label: "Create pair",
+        run: async (onAccepted) => {
+          const data = encodeFactory("createPair", [toPathAddress(tokenA!), toPathAddress(tokenB!)]);
+          const hash = await sendTx({ to: FACTORY_ADDRESS, data, value: 0n, abi: FACTORY_ABI });
+          recordTx(hash, `Create pair ${tokenA!.symbol}/${tokenB!.symbol}`);
+          trackTxToast(
+            hash,
+            "pair",
+            { pending: "Creating pair", success: "Pair created", failure: "Create pair failed" },
+            `${tokenA!.symbol}/${tokenB!.symbol}`,
+          );
+          onAccepted(hash);
+          await waitForReceiptSuccess(hash);
+          // Re-render so the "pair already exists" state and CTA reflect the
+          // on-chain result.
+          void render();
+        },
+      },
+    ];
   }
 
   const unsub = walletStore.subscribe(() => void render());

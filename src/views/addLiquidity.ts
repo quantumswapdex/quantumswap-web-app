@@ -4,24 +4,23 @@
  * dual approvals, and calls addLiquidity / addLiquidityETH.
  */
 
-import qc from "quantumcoin";
 import { clear, el } from "../ui/dom";
 import type { RouteContext, ViewResult } from "../ui/router";
-import { errText, statRow } from "./shared";
+import { approvalStep, statRow } from "./shared";
 import { createTokenAmountInput } from "../ui/components/tokenAmountInput";
 import { gearIcon } from "../ui/components/icons";
 import { openSettingsPopover } from "./settingsPopover";
-import { showToast } from "../ui/components/toast";
 import { trackTxToast } from "../ui/components/txToast";
+import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import { NATIVE_TOKEN, ROUTER_ADDRESS, WQ_TOKEN, type TokenInfo } from "../config/chain";
-import { ERC20_ABI, ROUTER_ABI, encodeErc20, encodeRouter, erc20, pair as pairContract } from "../lib/contracts";
+import { ERC20_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
 import { findToken, toPathAddress } from "../tokens/tokenList";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
 import { formatAmount, formatPercent } from "../lib/format";
 import { deadlineFrom, minWithSlippage, quote } from "../lib/quoteMath";
 import { sanitizeReserves, sanitizeAddressResponse } from "../lib/sanitizeResponse";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
-import { sendTx, waitForReceipt } from "../lib/tx";
+import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
@@ -190,69 +189,79 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
     );
   }
 
-  async function doAdd(): Promise<void> {
+  function doAdd(): void {
     const account = walletStore.get().account;
     if (!account) return;
     const amountA = parseAmount(inputA.getAmount(), tokenA.decimals);
     const amountB = parseAmount(inputB.getAmount(), tokenB.decimals);
     if (!amountA || !amountB || amountA <= 0n || amountB <= 0n) return;
 
-    const slippage = settingsStore.get().slippagePercent;
-    const amountAMin = minWithSlippage(amountA, slippage);
-    const amountBMin = minWithSlippage(amountB, slippage);
-    const ts = await getLatestBlockTimestamp();
-    const deadline = deadlineFrom(ts);
-
     submitting = true;
     renderAction();
-    try {
-      if (tokenA.isNative || tokenB.isNative) {
-        const nativeAmount = tokenA.isNative ? amountA : amountB;
-        const token = tokenA.isNative ? tokenB : tokenA;
-        const tokenAmount = tokenA.isNative ? amountB : amountA;
-        const tokenAmountMin = tokenA.isNative ? amountBMin : amountAMin;
-        const nativeAmountMin = tokenA.isNative ? amountAMin : amountBMin;
-        await ensureApproval(toPathAddress(token), account, tokenAmount, token.symbol);
-        const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
-        const data = encodeRouter("addLiquidityETH", [toPathAddress(token), tokenAmount, tokenAmountMin, nativeAmountMin, account, deadline]);
-        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: nativeAmount, abi: ROUTER_ABI });
-        recordTx(hash, `Add ${summary}`);
-        onSubmitted(hash);
-        trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
-        return;
-      }
-
-      await ensureApproval(toPathAddress(tokenA), account, amountA, tokenA.symbol);
-      await ensureApproval(toPathAddress(tokenB), account, amountB, tokenB.symbol);
-      const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
-      const data = encodeRouter("addLiquidity", [toPathAddress(tokenA), toPathAddress(tokenB), amountA, amountB, amountAMin, amountBMin, account, deadline]);
-      const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
-      recordTx(hash, `Add ${summary}`);
-      onSubmitted(hash);
-      trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
-    } catch (err) {
-      showToast({ kind: "error", title: "Add liquidity failed", message: errText(err), autoDismissMs: 7000 });
-    } finally {
-      submitting = false;
-      renderAction();
-    }
+    openTxStepsDialog({
+      title: "Add liquidity",
+      buildSteps: () => buildAddSteps(account, amountA, amountB),
+      onClose: () => {
+        submitting = false;
+        renderAction();
+      },
+    });
   }
 
-  async function ensureApproval(tokenAddr: string, owner: string, amount: bigint, symbol: string): Promise<void> {
-    const allowanceRaw = await erc20(tokenAddr).allowance(owner, ROUTER_ADDRESS);
-    const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
-    if (allowance >= amount) return;
-    const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
-    const hash = await sendTx({ to: tokenAddr, data, value: 0n, abi: ERC20_ABI });
-    recordTx(hash, `Approve ${symbol}`);
-    trackTxToast(
-      hash,
-      "approve",
-      { pending: `Approving ${symbol}`, success: `${symbol} approved`, failure: `${symbol} approval failed` },
-      "Allow the router to spend your token.",
-    );
-    const receipt = await waitForReceipt(hash);
-    if (!receipt || receipt.status !== 1) throw new Error(`${symbol} approval was not confirmed`);
+  async function buildAddSteps(account: string, amountA: bigint, amountB: bigint): Promise<TxStep[]> {
+    const steps: TxStep[] = [];
+
+    if (tokenA.isNative || tokenB.isNative) {
+      const nativeIsA = Boolean(tokenA.isNative);
+      const token = nativeIsA ? tokenB : tokenA;
+      const tokenAmount = nativeIsA ? amountB : amountA;
+      const nativeAmount = nativeIsA ? amountA : amountB;
+      const slippage = settingsStore.get().slippagePercent;
+      const tokenAmountMin = minWithSlippage(tokenAmount, slippage);
+      const nativeAmountMin = minWithSlippage(nativeAmount, slippage);
+      const ap = await approvalStep({ tokenAddr: toPathAddress(token), symbol: token.symbol, abi: ERC20_ABI, owner: account, amount: tokenAmount });
+      if (ap) steps.push(ap);
+      steps.push({
+        label: "Add liquidity",
+        run: async (onAccepted) => {
+          const ts = await getLatestBlockTimestamp();
+          const deadline = deadlineFrom(ts);
+          const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
+          const data = encodeRouter("addLiquidityETH", [toPathAddress(token), tokenAmount, tokenAmountMin, nativeAmountMin, account, deadline]);
+          const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: nativeAmount, abi: ROUTER_ABI });
+          recordTx(hash, `Add ${summary}`);
+          trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
+          onAccepted(hash);
+          await waitForReceiptSuccess(hash);
+          onSubmitted(hash);
+        },
+      });
+      return steps;
+    }
+
+    const apA = await approvalStep({ tokenAddr: toPathAddress(tokenA), symbol: tokenA.symbol, abi: ERC20_ABI, owner: account, amount: amountA });
+    if (apA) steps.push(apA);
+    const apB = await approvalStep({ tokenAddr: toPathAddress(tokenB), symbol: tokenB.symbol, abi: ERC20_ABI, owner: account, amount: amountB });
+    if (apB) steps.push(apB);
+    steps.push({
+      label: "Add liquidity",
+      run: async (onAccepted) => {
+        const slippage = settingsStore.get().slippagePercent;
+        const amountAMin = minWithSlippage(amountA, slippage);
+        const amountBMin = minWithSlippage(amountB, slippage);
+        const ts = await getLatestBlockTimestamp();
+        const deadline = deadlineFrom(ts);
+        const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
+        const data = encodeRouter("addLiquidity", [toPathAddress(tokenA), toPathAddress(tokenB), amountA, amountB, amountAMin, amountBMin, account, deadline]);
+        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
+        recordTx(hash, `Add ${summary}`);
+        trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
+        onAccepted(hash);
+        await waitForReceiptSuccess(hash);
+        onSubmitted(hash);
+      },
+    });
+    return steps;
   }
 
   /** Clear the form after a submitted tx; the status toast is handled per action. */

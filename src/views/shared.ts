@@ -1,8 +1,15 @@
 /** Shared view building blocks (preview design language): page heads, panels, states. */
 
+import qc from "quantumcoin";
 import { el, type Child } from "../ui/dom";
 import { connectWallet, walletStore } from "../wallet/wallet";
 import { showToast } from "../ui/components/toast";
+import { trackTxToast } from "../ui/components/txToast";
+import type { TxStep } from "../ui/components/txSteps";
+import { erc20, encodeErc20 } from "../lib/contracts";
+import { ROUTER_ADDRESS } from "../config/chain";
+import { sendTx, waitForReceiptSuccess } from "../lib/tx";
+import { recordTx } from "../lib/txStore";
 
 export function pageHeader(title: string, subtitle?: string): HTMLElement {
   return el(
@@ -80,4 +87,37 @@ export function errText(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
   return "Unknown error";
+}
+
+/**
+ * Build an "Approve <symbol>" step for the multi-step tx dialog. Returns null
+ * when the existing allowance already covers `amount` (no tx needed), so the
+ * dialog only lists approvals that are actually required.
+ */
+export async function approvalStep(opts: {
+  tokenAddr: string;
+  symbol: string;
+  abi: readonly unknown[];
+  owner: string;
+  amount: bigint;
+}): Promise<TxStep | null> {
+  const allowanceRaw = await erc20(opts.tokenAddr).allowance(opts.owner, ROUTER_ADDRESS);
+  const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
+  if (allowance >= opts.amount) return null;
+  return {
+    label: `Approve ${opts.symbol}`,
+    run: async (onAccepted) => {
+      const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
+      const hash = await sendTx({ to: opts.tokenAddr, data, value: 0n, abi: opts.abi });
+      recordTx(hash, `Approve ${opts.symbol}`);
+      trackTxToast(
+        hash,
+        "approve",
+        { pending: `Approving ${opts.symbol}`, success: `${opts.symbol} approved`, failure: `${opts.symbol} approval failed` },
+        "Allow the router to spend your token.",
+      );
+      onAccepted(hash);
+      await waitForReceiptSuccess(hash);
+    },
+  };
 }

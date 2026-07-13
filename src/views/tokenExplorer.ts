@@ -42,11 +42,13 @@ export function tokenExplorerView(): ViewResult {
     "Import token",
   );
 
+  const createTokenBtn = el("a", { class: "btn btn-primary", href: "#/tokens/create" }, "Create token");
+
   const node = el(
     "div",
     { class: "page" },
     pageHeader("Token Explorer", "Default tokens plus any token you import by contract address."),
-    el("div", { class: "toolbar" }, searchInput, importBtn),
+    el("div", { class: "toolbar" }, searchInput, importBtn, createTokenBtn),
     listWrap,
   );
 

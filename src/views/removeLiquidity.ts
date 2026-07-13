@@ -3,22 +3,21 @@
  * approval, and removeLiquidity / removeLiquidityETH.
  */
 
-import qc from "quantumcoin";
 import { clear, el } from "../ui/dom";
 import type { RouteContext, ViewResult } from "../ui/router";
-import { card, errText, errorState, loadingState, pageHeader, statRow } from "./shared";
-import { showToast } from "../ui/components/toast";
+import { approvalStep, card, errText, errorState, loadingState, pageHeader, statRow } from "./shared";
 import { trackTxToast } from "../ui/components/txToast";
+import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import { ROUTER_ADDRESS, WQ_ADDRESS, type TokenInfo } from "../config/chain";
-import { PAIR_ABI, ROUTER_ABI, encodeErc20, encodeRouter, pair as pairContract } from "../lib/contracts";
+import { PAIR_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
 import { findToken, readTokenMetadata, toPathAddress } from "../tokens/tokenList";
 import { sanitizeAddress } from "../lib/sanitize";
 import { sanitizeAddressResponse, sanitizeReserves } from "../lib/sanitizeResponse";
 import { formatAmount } from "../lib/format";
 import { deadlineFrom, minWithSlippage } from "../lib/quoteMath";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
-import { sendTx, waitForReceipt } from "../lib/tx";
-import { onTxSettled, recordTx } from "../lib/txStore";
+import { sendTx, waitForReceiptSuccess } from "../lib/tx";
+import { recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
 
@@ -148,71 +147,65 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
     );
   }
 
-  async function doRemove(liquidity: bigint, amountA: bigint, amountB: bigint): Promise<void> {
+  function doRemove(liquidity: bigint, amountA: bigint, amountB: bigint): void {
     const account = walletStore.get().account;
     if (!account || !tokenA || !tokenB || liquidity <= 0n) return;
-    const slippage = settingsStore.get().slippagePercent;
-    const amountAMin = minWithSlippage(amountA, slippage);
-    const amountBMin = minWithSlippage(amountB, slippage);
-    const ts = await getLatestBlockTimestamp();
-    const deadline = deadlineFrom(ts);
-
     submitting = true;
     render();
-    try {
-      // Approve the router to burn the LP tokens.
-      await ensureLpApproval(account, liquidity);
-
-      const aAddr = toPathAddress(tokenA);
-      const bAddr = toPathAddress(tokenB);
-      const aIsWq = aAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
-      const bIsWq = bAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
-
-      let data: string;
-      if (aIsWq || bIsWq) {
-        // Return native Q for the WQ side.
-        const token = aIsWq ? bAddr : aAddr;
-        const tokenMin = aIsWq ? amountBMin : amountAMin;
-        const ethMin = aIsWq ? amountAMin : amountBMin;
-        data = encodeRouter("removeLiquidityETH", [token, liquidity, tokenMin, ethMin, account, deadline]);
-      } else {
-        data = encodeRouter("removeLiquidity", [aAddr, bAddr, liquidity, amountAMin, amountBMin, account, deadline]);
-      }
-      const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
-      recordTx(hash, `Remove ${percent}% ${tokenA.symbol}/${tokenB.symbol} liquidity`);
-      trackTxToast(
-        hash,
-        "remove",
-        { pending: "Removing liquidity", success: "Liquidity removed", failure: "Remove liquidity failed" },
-        `${percent}% of ${tokenA.symbol}/${tokenB.symbol} \u2192 ~${formatAmount(amountA, tokenA.decimals, 6)} ${tokenA.symbol} + ~${formatAmount(amountB, tokenB.decimals, 6)} ${tokenB.symbol}`,
-      );
-      // Reload the position once the tx settles so the LP balance and
-      // estimated amounts reflect the on-chain result.
-      onTxSettled(hash, () => void load());
-    } catch (err) {
-      showToast({ kind: "error", title: "Remove liquidity failed", message: errText(err), autoDismissMs: 7000 });
-    } finally {
-      submitting = false;
-      render();
-    }
+    openTxStepsDialog({
+      title: "Remove liquidity",
+      buildSteps: () => buildRemoveSteps(account, liquidity, amountA, amountB),
+      onClose: () => {
+        submitting = false;
+        render();
+      },
+    });
   }
 
-  async function ensureLpApproval(owner: string, liquidity: bigint): Promise<void> {
-    const p = pairContract(pairAddress!);
-    const allowanceRaw = await p.allowance(owner, ROUTER_ADDRESS);
-    const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
-    if (allowance >= liquidity) return;
-    const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
-    const hash = await sendTx({ to: pairAddress!, data, value: 0n, abi: PAIR_ABI });
-    recordTx(hash, "Approve LP tokens");
-    trackTxToast(
-      hash,
-      "approve",
-      { pending: "Approving LP tokens", success: "LP tokens approved", failure: "LP token approval failed" },
-      tokenA && tokenB ? `${tokenA.symbol}/${tokenB.symbol} LP` : undefined,
-    );
-    const receipt = await waitForReceipt(hash);
-    if (!receipt || receipt.status !== 1) throw new Error("LP approval was not confirmed");
+  async function buildRemoveSteps(account: string, liquidity: bigint, amountA: bigint, amountB: bigint): Promise<TxStep[]> {
+    const steps: TxStep[] = [];
+    const ap = await approvalStep({ tokenAddr: pairAddress!, symbol: "LP", abi: PAIR_ABI, owner: account, amount: liquidity });
+    if (ap) steps.push(ap);
+    steps.push({
+      label: "Remove liquidity",
+      run: async (onAccepted) => {
+        const slippage = settingsStore.get().slippagePercent;
+        const amountAMin = minWithSlippage(amountA, slippage);
+        const amountBMin = minWithSlippage(amountB, slippage);
+        const ts = await getLatestBlockTimestamp();
+        const deadline = deadlineFrom(ts);
+
+        const aAddr = toPathAddress(tokenA!);
+        const bAddr = toPathAddress(tokenB!);
+        const aIsWq = aAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
+        const bIsWq = bAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
+
+        let data: string;
+        if (aIsWq || bIsWq) {
+          // Return native Q for the WQ side.
+          const token = aIsWq ? bAddr : aAddr;
+          const tokenMin = aIsWq ? amountBMin : amountAMin;
+          const ethMin = aIsWq ? amountAMin : amountBMin;
+          data = encodeRouter("removeLiquidityETH", [token, liquidity, tokenMin, ethMin, account, deadline]);
+        } else {
+          data = encodeRouter("removeLiquidity", [aAddr, bAddr, liquidity, amountAMin, amountBMin, account, deadline]);
+        }
+        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
+        recordTx(hash, `Remove ${percent}% ${tokenA!.symbol}/${tokenB!.symbol} liquidity`);
+        trackTxToast(
+          hash,
+          "remove",
+          { pending: "Removing liquidity", success: "Liquidity removed", failure: "Remove liquidity failed" },
+          `${percent}% of ${tokenA!.symbol}/${tokenB!.symbol} \u2192 ~${formatAmount(amountA, tokenA!.decimals, 6)} ${tokenA!.symbol} + ~${formatAmount(amountB, tokenB!.decimals, 6)} ${tokenB!.symbol}`,
+        );
+        onAccepted(hash);
+        await waitForReceiptSuccess(hash);
+        // Reload the position so the LP balance and estimated amounts reflect
+        // the on-chain result.
+        void load();
+      },
+    });
+    return steps;
   }
 
   const unsub = walletStore.subscribe(() => void load());

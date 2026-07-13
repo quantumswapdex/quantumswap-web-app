@@ -39,11 +39,17 @@ export function poolExplorerView(): ViewResult {
     "Load all pairs from factory",
   );
 
+  const createPairBtn = el(
+    "a",
+    { class: "btn btn-primary", href: "#/pools/create" },
+    "Create Pair",
+  );
+
   const node = el(
     "div",
     { class: "page" },
     pageHeader("Pool Explorer", "Live reserves and prices for known QuantumSwap pairs."),
-    el("div", { class: "toolbar" }, searchInput, loadAllBtn),
+    el("div", { class: "toolbar" }, searchInput, loadAllBtn, createPairBtn),
     statusEl,
     tableWrap,
   );
