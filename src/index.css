@@ -1797,6 +1797,19 @@ main {
   border-bottom: 1px solid rgba(255, 90, 100, 0.3);
 }
 
+/* Custom-release notice: shown on every page when a user-added release is
+   active. Subtle amber note tone; theme variables keep it legible in light/dark. */
+.customrel {
+  position: relative;
+  z-index: 9;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #b8ff3b;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 /* Startup gate backdrop (extension missing). */
 .gate {
   position: relative;

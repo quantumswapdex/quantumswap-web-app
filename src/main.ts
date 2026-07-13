@@ -14,6 +14,7 @@ import "@fontsource/space-grotesk/700.css";
 import "./index.css";
 import { Config, Initialize } from "quantumcoin/config";
 import { CHAIN_ID } from "./config/chain";
+import { initReleases } from "./config/releases";
 import { appRouter } from "./app/router";
 import { createAppShell } from "./ui/components/appShell";
 import { brandBackdrop, openInstallModal, openConnectModal } from "./ui/components/gateModals";
@@ -34,6 +35,7 @@ import { tokenDetailView } from "./views/tokenDetail";
 import { positionsView } from "./views/positions";
 import { activityView } from "./views/activity";
 import { settingsView } from "./views/settings";
+import { releasesView } from "./views/releases";
 import { createTokenView } from "./views/createToken";
 import { notFoundView } from "./views/notFound";
 
@@ -47,11 +49,15 @@ function registerRoutes(): void {
     // The front page is the swap panel (swap-only landing).
     .add("/", swapView, { theme: "violet" })
     .add("swap", swapView, { theme: "violet" })
+    .add("swap/:from", swapView, { theme: "violet" })
     .add("swap/:from/:to", swapView, { theme: "violet" })
     .add("pools", poolsView, { theme: "nebula" })
     .add("pools/add", addLiquidityView, { theme: "nebula" })
+    .add("pools/add/:tokenA", addLiquidityView, { theme: "nebula" })
     .add("pools/add/:tokenA/:tokenB", addLiquidityView, { theme: "nebula" })
     .add("pools/create", createPairView, { theme: "nebula" })
+    .add("pools/create/:tokenA", createPairView, { theme: "nebula" })
+    .add("pools/create/:tokenA/:tokenB", createPairView, { theme: "nebula" })
     .add("pools/remove/:pairAddress", removeLiquidityView, { theme: "nebula" })
     .add("explore/pools", poolExplorerView, { theme: "cyan" })
     .add("explore/pools/:pairAddress", pairDetailView, { theme: "cyan" })
@@ -61,6 +67,7 @@ function registerRoutes(): void {
     .add("positions", positionsView, { theme: "nebula" })
     .add("activity", activityView, { theme: "amber" })
     .add("settings", settingsView, { theme: "amber" })
+    .add("releases", releasesView, { theme: "amber" })
     .setNotFound(notFoundView);
 }
 
@@ -77,6 +84,10 @@ async function bootstrap(): Promise<void> {
   } catch {
     /* Initialize failure still lets the extension-missing panel render. */
   }
+
+  // Now that the SDK's address utils work, reload persisted custom releases
+  // (they are dropped by the import-time load; see initReleases).
+  initReleases();
 
   await initWallet();
 

@@ -12,13 +12,13 @@ import { openSettingsPopover } from "./settingsPopover";
 import { trackTxToast } from "../ui/components/txToast";
 import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import {
+  DEFAULT_PAIR_TOKEN_A,
+  DEFAULT_PAIR_TOKEN_B,
   NATIVE_TOKEN,
-  WQ_TOKEN,
-  WQ_ADDRESS,
-  ROUTER_ADDRESS,
   LP_FEE_BPS,
   type TokenInfo,
 } from "../config/chain";
+import { routerAddress, wqAddress } from "../config/releases";
 import {
   ERC20_ABI,
   ROUTER_ABI,
@@ -42,11 +42,11 @@ import { connectWallet, walletStore } from "../wallet/wallet";
 export function swapView(ctx: RouteContext): ViewResult {
   const fromParam = (ctx.params.from ?? ctx.query.get("from") ?? "").trim();
   const toParam = (ctx.params.to ?? ctx.query.get("to") ?? "").trim();
-  let fromToken: TokenInfo = resolveParamSync(fromParam) ?? NATIVE_TOKEN;
-  let toToken: TokenInfo = resolveParamSync(toParam) ?? WQ_TOKEN;
+  let fromToken: TokenInfo = resolveParamSync(fromParam) ?? DEFAULT_PAIR_TOKEN_A;
+  let toToken: TokenInfo = resolveParamSync(toParam) ?? DEFAULT_PAIR_TOKEN_B;
   // Avoid both sides resolving to the same token; keep the "to" side distinct.
   if (fromToken.address === toToken.address) {
-    toToken = fromToken.address === WQ_TOKEN.address ? NATIVE_TOKEN : WQ_TOKEN;
+    toToken = fromToken.address === DEFAULT_PAIR_TOKEN_B.address ? DEFAULT_PAIR_TOKEN_A : DEFAULT_PAIR_TOKEN_B;
   }
   let quotedOut = 0n;
   let pairMissing = false;
@@ -133,8 +133,8 @@ export function swapView(ctx: RouteContext): ViewResult {
     actionBox,
   );
 
-  const isWrap = (): boolean => Boolean(fromToken.isNative) && toToken.address === WQ_ADDRESS;
-  const isUnwrap = (): boolean => fromToken.address === WQ_ADDRESS && Boolean(toToken.isNative);
+  const isWrap = (): boolean => Boolean(fromToken.isNative) && toToken.address === wqAddress();
+  const isUnwrap = (): boolean => fromToken.address === wqAddress() && Boolean(toToken.isNative);
 
   async function refreshQuote(): Promise<void> {
     const token = ++quoteToken;
@@ -257,7 +257,7 @@ export function swapView(ctx: RouteContext): ViewResult {
         {
           label: "Wrap",
           run: async (onAccepted) => {
-            const hash = await sendTx({ to: WQ_ADDRESS, data: encodeWq("deposit", []), value: amountIn, abi: WQ_ABI });
+            const hash = await sendTx({ to: wqAddress(), data: encodeWq("deposit", []), value: amountIn, abi: WQ_ABI });
             recordTx(hash, `Wrap ${amount} Q`);
             trackTxToast(hash, "wrap", { pending: "Wrapping", success: "Wrap complete", failure: "Wrap failed" }, `${amount} Q \u2192 WQ`);
             onAccepted(hash);
@@ -273,7 +273,7 @@ export function swapView(ctx: RouteContext): ViewResult {
         {
           label: "Unwrap",
           run: async (onAccepted) => {
-            const hash = await sendTx({ to: WQ_ADDRESS, data: encodeWq("withdraw", [amountIn]), value: 0n, abi: WQ_ABI });
+            const hash = await sendTx({ to: wqAddress(), data: encodeWq("withdraw", [amountIn]), value: 0n, abi: WQ_ABI });
             recordTx(hash, `Unwrap ${amount} WQ`);
             trackTxToast(hash, "wrap", { pending: "Unwrapping", success: "Unwrap complete", failure: "Unwrap failed" }, `${amount} WQ \u2192 Q`);
             onAccepted(hash);
@@ -315,7 +315,7 @@ export function swapView(ctx: RouteContext): ViewResult {
         }
         const amount = fromInput.getAmount();
         const outAmount = toInput.getAmount();
-        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value, abi: ROUTER_ABI });
+        const hash = await sendTx({ to: routerAddress(), data, value, abi: ROUTER_ABI });
         recordTx(hash, `Swap ${amount} ${fromToken.symbol} for ${toToken.symbol}`);
         trackTxToast(
           hash,

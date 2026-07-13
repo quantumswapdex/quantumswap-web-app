@@ -12,7 +12,8 @@ import { gearIcon } from "../ui/components/icons";
 import { openSettingsPopover } from "./settingsPopover";
 import { trackTxToast } from "../ui/components/txToast";
 import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
-import { NATIVE_TOKEN, ROUTER_ADDRESS, WQ_TOKEN, type TokenInfo } from "../config/chain";
+import { DEFAULT_PAIR_TOKEN_A, DEFAULT_PAIR_TOKEN_B, NATIVE_TOKEN, type TokenInfo } from "../config/chain";
+import { routerAddress } from "../config/releases";
 import { ERC20_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
 import { findToken, toPathAddress } from "../tokens/tokenList";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
@@ -27,8 +28,12 @@ import { connectWallet, walletStore } from "../wallet/wallet";
 import { resolvePairAddress } from "../lib/pairRegistry";
 
 export function addLiquidityView(ctx: RouteContext): ViewResult {
-  let tokenA: TokenInfo = resolveParam(ctx.params.tokenA) ?? NATIVE_TOKEN;
-  let tokenB: TokenInfo = resolveParam(ctx.params.tokenB) ?? WQ_TOKEN;
+  let tokenA: TokenInfo = resolveParam(ctx.params.tokenA) ?? DEFAULT_PAIR_TOKEN_A;
+  let tokenB: TokenInfo = resolveParam(ctx.params.tokenB) ?? DEFAULT_PAIR_TOKEN_B;
+  // Avoid both sides resolving to the same token (e.g. deep link to only tokenA).
+  if (tokenA.address === tokenB.address) {
+    tokenB = tokenA.address === DEFAULT_PAIR_TOKEN_B.address ? DEFAULT_PAIR_TOKEN_A : DEFAULT_PAIR_TOKEN_B;
+  }
   let reserves: { reserveA: bigint; reserveB: bigint } | null = null;
   let pairAddress: string | null = null;
   let totalSupply = 0n;
@@ -228,7 +233,7 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
           const deadline = deadlineFrom(ts);
           const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
           const data = encodeRouter("addLiquidityETH", [toPathAddress(token), tokenAmount, tokenAmountMin, nativeAmountMin, account, deadline]);
-          const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: nativeAmount, abi: ROUTER_ABI });
+          const hash = await sendTx({ to: routerAddress(), data, value: nativeAmount, abi: ROUTER_ABI });
           recordTx(hash, `Add ${summary}`);
           trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
           onAccepted(hash);
@@ -253,7 +258,7 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
         const deadline = deadlineFrom(ts);
         const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
         const data = encodeRouter("addLiquidity", [toPathAddress(tokenA), toPathAddress(tokenB), amountA, amountB, amountAMin, amountBMin, account, deadline]);
-        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
+        const hash = await sendTx({ to: routerAddress(), data, value: 0n, abi: ROUTER_ABI });
         recordTx(hash, `Add ${summary}`);
         trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
         onAccepted(hash);

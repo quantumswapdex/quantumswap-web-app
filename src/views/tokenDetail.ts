@@ -92,7 +92,13 @@ export function tokenDetailView(ctx: RouteContext): ViewResult {
                 )
               : el("p", {}, "No known pools contain this token yet."),
           ),
-          el("div", { class: "btn-row" }, el("a", { class: "btn btn-primary", href: "#/swap" }, "Swap")),
+          el(
+            "div",
+            { class: "btn-row" },
+            el("a", { class: "btn btn-primary", href: `#/swap/${address}` }, "Swap"),
+            el("a", { class: "btn", href: `#/pools/add/${address}` }, "Add liquidity"),
+            el("a", { class: "btn", href: `#/pools/create/${address}` }, "Create pair"),
+          ),
         ),
       );
     } catch (err) {

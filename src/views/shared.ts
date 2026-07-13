@@ -7,7 +7,7 @@ import { showToast } from "../ui/components/toast";
 import { trackTxToast } from "../ui/components/txToast";
 import type { TxStep } from "../ui/components/txSteps";
 import { erc20, encodeErc20 } from "../lib/contracts";
-import { ROUTER_ADDRESS } from "../config/chain";
+import { routerAddress } from "../config/releases";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { recordTx } from "../lib/txStore";
 
@@ -101,13 +101,13 @@ export async function approvalStep(opts: {
   owner: string;
   amount: bigint;
 }): Promise<TxStep | null> {
-  const allowanceRaw = await erc20(opts.tokenAddr).allowance(opts.owner, ROUTER_ADDRESS);
+  const allowanceRaw = await erc20(opts.tokenAddr).allowance(opts.owner, routerAddress());
   const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
   if (allowance >= opts.amount) return null;
   return {
     label: `Approve ${opts.symbol}`,
     run: async (onAccepted) => {
-      const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
+      const data = encodeErc20("approve", [routerAddress(), qc.MaxUint256]);
       const hash = await sendTx({ to: opts.tokenAddr, data, value: 0n, abi: opts.abi });
       recordTx(hash, `Approve ${opts.symbol}`);
       trackTxToast(

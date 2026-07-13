@@ -5,13 +5,14 @@
  */
 
 import {
-  BUILTIN_TOKENS,
+  NATIVE_TOKEN,
+  APPROVED_TOKENS,
   NATIVE_SENTINEL,
-  WQ_ADDRESS,
   impersonatesStablecoin,
   isRecognizedAddress,
   type TokenInfo,
 } from "../config/chain";
+import { wqAddress, wqToken } from "../config/releases";
 import { createStore } from "../ui/store";
 import { erc20 } from "../lib/contracts";
 import { extensionProvider } from "../lib/extensionProvider";
@@ -78,9 +79,11 @@ function dedupe(list: ImportedToken[]): ImportedToken[] {
   return out;
 }
 
-/** All tokens shown by default: built-ins first, then imported. */
+/** All tokens shown by default: built-ins first, then imported. The wrapped-Q
+ * entry resolves to the active release's WQ so a custom release with a different
+ * WQ address is represented correctly in selectors and path building. */
 export function getAllTokens(): TokenInfo[] {
-  return [...BUILTIN_TOKENS, ...tokenStore.get()];
+  return [NATIVE_TOKEN, wqToken(), ...APPROVED_TOKENS, ...tokenStore.get()];
 }
 
 /** Find a token in the built-in or imported set by address (or native sentinel). */
@@ -180,5 +183,5 @@ export function removeImportedToken(address: string): void {
 
 /** Map a UI token to the on-chain address used in paths (native -> WQ). */
 export function toPathAddress(token: TokenInfo): string {
-  return token.address === NATIVE_SENTINEL ? WQ_ADDRESS : token.address;
+  return token.address === NATIVE_SENTINEL ? wqAddress() : token.address;
 }

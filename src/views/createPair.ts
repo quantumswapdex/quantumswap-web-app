@@ -1,22 +1,28 @@
 /** Explicit pair creation via the factory (advanced; no initial liquidity). */
 
 import { clear, el } from "../ui/dom";
-import type { ViewResult } from "../ui/router";
+import type { RouteContext, ViewResult } from "../ui/router";
 import { chevronDownIcon, coinIcon } from "../ui/components/icons";
 import { trackTxToast } from "../ui/components/txToast";
 import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
-import { NATIVE_TOKEN, WQ_TOKEN, FACTORY_ADDRESS, type TokenInfo } from "../config/chain";
+import { DEFAULT_PAIR_TOKEN_A, DEFAULT_PAIR_TOKEN_B, NATIVE_TOKEN, type TokenInfo } from "../config/chain";
+import { factoryAddress } from "../config/releases";
 import { FACTORY_ABI, encodeFactory } from "../lib/contracts";
 import { openTokenSelector } from "../tokens/tokenSelector";
-import { toPathAddress } from "../tokens/tokenList";
+import { findToken, toPathAddress } from "../tokens/tokenList";
+import { sanitizeAddress } from "../lib/sanitize";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { recordTx } from "../lib/txStore";
 import { connectWallet, walletStore } from "../wallet/wallet";
 import { resolvePairAddress } from "../lib/pairRegistry";
 
-export function createPairView(): ViewResult {
-  let tokenA: TokenInfo | null = NATIVE_TOKEN;
-  let tokenB: TokenInfo | null = WQ_TOKEN;
+export function createPairView(ctx: RouteContext): ViewResult {
+  let tokenA: TokenInfo | null = resolveParam(ctx.params.tokenA) ?? DEFAULT_PAIR_TOKEN_A;
+  let tokenB: TokenInfo | null = resolveParam(ctx.params.tokenB) ?? DEFAULT_PAIR_TOKEN_B;
+  // Avoid both sides resolving to the same token (e.g. deep link to only tokenA).
+  if (tokenA.address === tokenB.address) {
+    tokenB = tokenA.address === DEFAULT_PAIR_TOKEN_B.address ? DEFAULT_PAIR_TOKEN_A : DEFAULT_PAIR_TOKEN_B;
+  }
   let submitting = false; // locks the CTA while the extension is signing/submitting
 
   const status = el("div", { class: "dd-status", style: { marginTop: "10px" } });
@@ -112,7 +118,7 @@ export function createPairView(): ViewResult {
         label: "Create pair",
         run: async (onAccepted) => {
           const data = encodeFactory("createPair", [toPathAddress(tokenA!), toPathAddress(tokenB!)]);
-          const hash = await sendTx({ to: FACTORY_ADDRESS, data, value: 0n, abi: FACTORY_ABI });
+          const hash = await sendTx({ to: factoryAddress(), data, value: 0n, abi: FACTORY_ABI });
           recordTx(hash, `Create pair ${tokenA!.symbol}/${tokenB!.symbol}`);
           trackTxToast(
             hash,
@@ -134,6 +140,14 @@ export function createPairView(): ViewResult {
   void render();
 
   return { node, theme: "nebula", title: "Create a pair", cleanup: () => unsub() };
+}
+
+function resolveParam(param?: string): TokenInfo | null {
+  if (!param) return null;
+  if (param === NATIVE_TOKEN.address) return NATIVE_TOKEN;
+  const addr = sanitizeAddress(param);
+  if (!addr) return null;
+  return findToken(addr);
 }
 
 function selectorButton(label: string, get: () => TokenInfo | null, set: (t: TokenInfo) => void) {

@@ -7,11 +7,9 @@ import { openModal } from "../ui/components/modal";
 import {
   BLOCK_EXPLORER,
   CHAIN_ID,
-  FACTORY_ADDRESS,
   NETWORK_NAME,
-  ROUTER_ADDRESS,
-  WQ_ADDRESS,
 } from "../config/chain";
+import { factoryAddress, routerAddress, wqAddress } from "../config/releases";
 import { settingsStore, setExpertMode, setSlippage } from "../config/settings";
 import { removeImportedToken, tokenStore } from "../tokens/tokenList";
 import { txStore } from "../lib/txStore";
@@ -71,9 +69,9 @@ export function settingsView(): ViewResult {
       body: el(
         "div",
         {},
-        entry("Wrapped Q (WQ)", WQ_ADDRESS),
-        entry("Factory", FACTORY_ADDRESS),
-        entry("Router", ROUTER_ADDRESS),
+        entry("Wrapped Q (WQ)", wqAddress()),
+        entry("Factory", factoryAddress()),
+        entry("Router", routerAddress()),
       ),
     });
   }

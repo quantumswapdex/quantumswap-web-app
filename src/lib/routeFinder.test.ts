@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
+import { initSdkForTests } from "../testSetup";
 import { WQ_ADDRESS, type TokenInfo } from "../config/chain";
+import { addCustomRelease, BUILTIN_RELEASES, releaseStore, setDefault, wqAddress } from "../config/releases";
 import { mergePair, registryStore } from "./pairRegistry";
 import { importToken, tokenStore } from "../tokens/tokenList";
 
@@ -53,6 +55,7 @@ const HEI_TOKEN: TokenInfo = { address: HEI, symbol: "hei", name: "Heisen", deci
 const Y2Q_TOKEN: TokenInfo = { address: Y2Q, symbol: "Y2Q", name: "Y2Q", decimals: 18 };
 
 describe("findBestRoute", () => {
+  beforeAll(() => initSdkForTests());
   beforeEach(() => {
     registryStore.set([]);
     tokenStore.set([]);
@@ -62,19 +65,20 @@ describe("findBestRoute", () => {
     } catch {
       /* ignore */
     }
+    releaseStore.set({ releases: [...BUILTIN_RELEASES], defaultId: BUILTIN_RELEASES[0].id });
   });
 
   it("routes 2-hop via WQ when no direct pool exists", async () => {
     setPools([
-      [HEI, WQ_ADDRESS],
-      [Y2Q, WQ_ADDRESS],
+      [HEI, wqAddress()],
+      [Y2Q, wqAddress()],
     ]);
-    mergePair(pairRecord("0x" + "p".repeat(64), HEI, WQ_ADDRESS));
-    mergePair(pairRecord("0x" + "q".repeat(64), Y2Q, WQ_ADDRESS));
+    mergePair(pairRecord("0x" + "p".repeat(64), HEI, wqAddress()));
+    mergePair(pairRecord("0x" + "q".repeat(64), Y2Q, wqAddress()));
 
     const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
     expect(route).not.toBeNull();
-    expect(route!.path).toEqual([HEI.toLowerCase(), WQ_ADDRESS.toLowerCase(), Y2Q.toLowerCase()]);
+    expect(route!.path).toEqual([HEI.toLowerCase(), wqAddress().toLowerCase(), Y2Q.toLowerCase()]);
     expect(route!.out).toBeGreaterThan(0n);
     // 2 hops => two 0.30% fee deductions.
     expect(route!.out).toBe(((1_000_000n * 997n) / 1000n) * 997n / 1000n);
@@ -117,13 +121,13 @@ describe("findBestRoute", () => {
     // Chain HEI -> T1 -> WQ -> T2 -> Y2Q (5 tokens, 4 hops); no shorter path.
     setPools([
       [HEI, T1],
-      [T1, WQ_ADDRESS],
-      [WQ_ADDRESS, T2],
+      [T1, wqAddress()],
+      [wqAddress(), T2],
       [T2, Y2Q],
     ]);
     mergePair(pairRecord("0x" + "a".repeat(64), HEI, T1));
-    mergePair(pairRecord("0x" + "b".repeat(64), T1, WQ_ADDRESS));
-    mergePair(pairRecord("0x" + "c".repeat(64), WQ_ADDRESS, T2));
+    mergePair(pairRecord("0x" + "b".repeat(64), T1, wqAddress()));
+    mergePair(pairRecord("0x" + "c".repeat(64), wqAddress(), T2));
     mergePair(pairRecord("0x" + "d".repeat(64), T2, Y2Q));
 
     const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
@@ -131,7 +135,7 @@ describe("findBestRoute", () => {
     expect(route!.path).toEqual([
       HEI.toLowerCase(),
       T1.toLowerCase(),
-      WQ_ADDRESS.toLowerCase(),
+      wqAddress().toLowerCase(),
       T2.toLowerCase(),
       Y2Q.toLowerCase(),
     ]);
@@ -139,5 +143,30 @@ describe("findBestRoute", () => {
     let expected = 1_000_000n;
     for (let i = 0; i < 4; i++) expected = (expected * 997n) / 1000n;
     expect(route!.out).toBe(expected);
+  });
+
+  it("routes via the active release's WQ (custom release), not the original Beta 1 WQ", async () => {
+    const WQ2 = "0x" + "9".repeat(64);
+    const FAC2 = "0x" + "8".repeat(64);
+    const ROUT2 = "0x" + "7".repeat(64);
+    const res = addCustomRelease("Custom Hub", WQ2, FAC2, ROUT2);
+    expect(res.ok).toBe(true);
+    setDefault(res.id as string);
+
+    // The active hub is now the custom WQ, not the Beta 1 WQ_ADDRESS.
+    expect(wqAddress().toLowerCase()).toBe(WQ2.toLowerCase());
+
+    setPools([
+      [HEI, WQ2],
+      [WQ2, Y2Q],
+    ]);
+    mergePair(pairRecord("0x" + "p".repeat(64), HEI, WQ2));
+    mergePair(pairRecord("0x" + "q".repeat(64), WQ2, Y2Q));
+
+    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), WQ2.toLowerCase(), Y2Q.toLowerCase()]);
+    // The original Beta 1 WQ must not appear in the path.
+    expect(route!.path).not.toContain(WQ_ADDRESS.toLowerCase());
   });
 });

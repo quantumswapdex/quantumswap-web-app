@@ -13,7 +13,7 @@ import {
   WQ,
 } from "quantumswap";
 import { extensionProvider } from "./extensionProvider";
-import { FACTORY_ADDRESS, ROUTER_ADDRESS, WQ_ADDRESS } from "../config/chain";
+import { factoryAddress, routerAddress, wqAddress } from "../config/releases";
 
 export const ROUTER_ABI = QuantumSwapV2Router02.abi;
 export const FACTORY_ABI = QuantumSwapV2Factory.abi;
@@ -21,14 +21,14 @@ export const PAIR_ABI = QuantumSwapV2Pair.abi;
 export const ERC20_ABI = IERC20.abi;
 export const WQ_ABI = WQ.abi;
 
-/** Factory contract (reads). */
+/** Factory contract (reads). Binds to the active release's factory at call time. */
 export function factory(): QuantumSwapV2Factory {
-  return QuantumSwapV2Factory.connect(FACTORY_ADDRESS, extensionProvider);
+  return QuantumSwapV2Factory.connect(factoryAddress(), extensionProvider);
 }
 
 /** Router contract (reads: quotes; writes are encoded + sent via tx.ts). */
 export function router(): QuantumSwapV2Router02 {
-  return QuantumSwapV2Router02.connect(ROUTER_ADDRESS, extensionProvider);
+  return QuantumSwapV2Router02.connect(routerAddress(), extensionProvider);
 }
 
 /** Pair contract at a given address (reads). */
@@ -41,9 +41,9 @@ export function erc20(address: string): IERC20 {
   return IERC20.connect(address, extensionProvider);
 }
 
-/** Wrapped-Q contract (reads + wrap/unwrap encoding). */
+/** Wrapped-Q contract (reads + wrap/unwrap encoding). Binds to the active release. */
 export function wq(): WQ {
-  return WQ.connect(WQ_ADDRESS, extensionProvider);
+  return WQ.connect(wqAddress(), extensionProvider);
 }
 
 let ifaceCache: Record<string, InstanceType<typeof qc.Interface>> | null = null;

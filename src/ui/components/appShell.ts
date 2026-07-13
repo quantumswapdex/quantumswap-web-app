@@ -12,6 +12,7 @@ import { copyIcon, menuIcon, openIcon, powerIcon, searchIcon } from "./icons";
 import { copyToClipboard } from "./addressPill";
 import { shortAddress } from "../../lib/format";
 import { CHAIN_ID, NETWORK_NAME, explorerAddressUrl } from "../../config/chain";
+import { currentRelease, isCustomActive, releaseStore } from "../../config/releases";
 import {
   connectWallet,
   disconnectWallet,
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
   { label: "Tokens", href: "#/explore/tokens", match: (h) => h.startsWith("#/explore/tokens") },
   { label: "Positions", href: "#/positions", match: (h) => h.startsWith("#/positions") },
   { label: "Activity", href: "#/activity", match: (h) => h.startsWith("#/activity") },
+  { label: "Releases", href: "#/releases", match: (h) => h.startsWith("#/releases") },
 ];
 
 export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
@@ -307,6 +309,9 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
 
   const navLinks = NAV.map((item) => el("a", { href: item.href, dataset: { nav: item.href } }, item.label));
   const [homeLink, ...pageLinks] = navLinks;
+  // "Releases" is the last NAV entry; pull it out so a separator can sit above
+  // it in the burger menu. It remains in `navLinks` for active-link highlighting.
+  const releasesLink = pageLinks.pop() ?? navLinks[navLinks.length - 1];
   const settingsLink = el("a", { href: "#/settings", dataset: { nav: "#/settings" } }, "Settings");
 
   const burgerMenu = el(
@@ -320,6 +325,8 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
     homeLink,
     el("div", { class: "sep" }),
     ...pageLinks,
+    el("div", { class: "sep" }),
+    releasesLink,
     el("div", { class: "sep" }),
     el("a", { href: DOWNLOAD_WALLET_URL, target: "_blank", rel: "noopener noreferrer" }, "Download Wallet"),
     settingsLink,
@@ -406,9 +413,10 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
   );
 
   const wrongNetworkBar = el("div", { class: "hidden" });
+  const customReleaseBar = el("div", { class: "hidden" });
   const main = el("main", {}, outlet, el("p", { class: "foot" }, "QuantumSwap Web App (Beta / Test Version)"));
 
-  const root = el("div", { class: "app" }, orbs(), header, wrongNetworkBar, main);
+  const root = el("div", { class: "app" }, orbs(), header, customReleaseBar, wrongNetworkBar, main);
 
   function renderAccount(state: WalletState): void {
     const connected = state.status === "connected" && Boolean(state.account);
@@ -440,7 +448,18 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
     }
   }
 
+  function renderReleaseBanner(): void {
+    if (isCustomActive()) {
+      customReleaseBar.setAttribute("class", "customrel");
+      customReleaseBar.replaceChildren(`You are using custom contracts: ${currentRelease().name}`);
+    } else {
+      customReleaseBar.setAttribute("class", "hidden");
+      customReleaseBar.replaceChildren();
+    }
+  }
+
   walletStore.subscribe(renderAccount, true);
+  releaseStore.subscribe(renderReleaseBanner, true);
   highlightNav();
 
   return { root, outlet };

@@ -87,22 +87,30 @@ export const WQ_TOKEN: TokenInfo = {
  * Approved token whitelist (from quantumswap-wallet-desktop/src/js/tokenfilter.js).
  * Decimals default to 18 but are re-read on-chain when the token is loaded.
  */
-export const APPROVED_TOKENS: TokenInfo[] = [
-  {
-    address: "0xe8ea8beb86e714ef2bde0afac17d6e45d1c35e48f312d6dc12c4fdb90d9e8a3d",
-    symbol: "hei",
-    name: "Heisen",
-    decimals: 18,
-    approved: true,
-  },
-  {
-    address: "0xa8036870874fbed790ed4d3bbd41b2f390b9858ff021f2993e90c6d1cbb167c7",
-    symbol: "Y2Q",
-    name: "Y2Q",
-    decimals: 18,
-    approved: true,
-  },
-];
+export const HEISEN_TOKEN: TokenInfo = {
+  address: "0xe8ea8beb86e714ef2bde0afac17d6e45d1c35e48f312d6dc12c4fdb90d9e8a3d",
+  symbol: "hei",
+  name: "Heisen",
+  decimals: 18,
+  approved: true,
+};
+
+export const Y2Q_TOKEN: TokenInfo = {
+  address: "0xa8036870874fbed790ed4d3bbd41b2f390b9858ff021f2993e90c6d1cbb167c7",
+  symbol: "Y2Q",
+  name: "Y2Q",
+  decimals: 18,
+  approved: true,
+};
+
+export const APPROVED_TOKENS: TokenInfo[] = [HEISEN_TOKEN, Y2Q_TOKEN];
+
+/**
+ * Default token pair preselected by the swap / create-pair / add-liquidity
+ * forms when the route does not specify tokens.
+ */
+export const DEFAULT_PAIR_TOKEN_A: TokenInfo = HEISEN_TOKEN;
+export const DEFAULT_PAIR_TOKEN_B: TokenInfo = Y2Q_TOKEN;
 
 /** Full built-in list shown by default (native + wrapped + approved). */
 export const BUILTIN_TOKENS: TokenInfo[] = [NATIVE_TOKEN, WQ_TOKEN, ...APPROVED_TOKENS];

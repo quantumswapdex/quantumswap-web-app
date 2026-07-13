@@ -7,7 +7,8 @@
  * yields the most output.
  */
 
-import { WQ_ADDRESS, type TokenInfo } from "../config/chain";
+import { type TokenInfo } from "../config/chain";
+import { wqAddress } from "../config/releases";
 import { getAllTokens, toPathAddress } from "../tokens/tokenList";
 import { getRegistry } from "./pairRegistry";
 import { router as routerContract } from "./contracts";
@@ -136,7 +137,7 @@ function orderedIntermediates(A: string, B: string): string[] {
     seen.add(a);
     out.push(a);
   };
-  add(WQ_ADDRESS);
+  add(wqAddress());
   for (const t of getAllTokens()) add(toPathAddress(t));
   for (const rec of getRegistry()) {
     add(rec.token0.address);

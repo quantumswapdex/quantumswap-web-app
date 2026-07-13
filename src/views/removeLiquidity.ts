@@ -8,7 +8,8 @@ import type { RouteContext, ViewResult } from "../ui/router";
 import { approvalStep, card, errText, errorState, loadingState, pageHeader, statRow } from "./shared";
 import { trackTxToast } from "../ui/components/txToast";
 import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
-import { ROUTER_ADDRESS, WQ_ADDRESS, type TokenInfo } from "../config/chain";
+import { type TokenInfo } from "../config/chain";
+import { routerAddress, wqAddress } from "../config/releases";
 import { PAIR_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
 import { findToken, readTokenMetadata, toPathAddress } from "../tokens/tokenList";
 import { sanitizeAddress } from "../lib/sanitize";
@@ -177,8 +178,8 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
 
         const aAddr = toPathAddress(tokenA!);
         const bAddr = toPathAddress(tokenB!);
-        const aIsWq = aAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
-        const bIsWq = bAddr.toLowerCase() === WQ_ADDRESS.toLowerCase();
+        const aIsWq = aAddr.toLowerCase() === wqAddress().toLowerCase();
+        const bIsWq = bAddr.toLowerCase() === wqAddress().toLowerCase();
 
         let data: string;
         if (aIsWq || bIsWq) {
@@ -190,7 +191,7 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
         } else {
           data = encodeRouter("removeLiquidity", [aAddr, bAddr, liquidity, amountAMin, amountBMin, account, deadline]);
         }
-        const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
+        const hash = await sendTx({ to: routerAddress(), data, value: 0n, abi: ROUTER_ABI });
         recordTx(hash, `Remove ${percent}% ${tokenA!.symbol}/${tokenB!.symbol} liquidity`);
         trackTxToast(
           hash,
@@ -215,8 +216,8 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
 }
 
 async function resolveToken(address: string): Promise<TokenInfo> {
-  if (address.toLowerCase() === WQ_ADDRESS.toLowerCase()) {
-    return findToken(WQ_ADDRESS) ?? { address: WQ_ADDRESS, symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
+  if (address.toLowerCase() === wqAddress().toLowerCase()) {
+    return findToken(wqAddress()) ?? { address: wqAddress(), symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
   }
   const known = findToken(address);
   if (known) return known;

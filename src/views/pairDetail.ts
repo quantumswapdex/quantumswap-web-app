@@ -4,7 +4,8 @@ import { clear, el } from "../ui/dom";
 import type { RouteContext, ViewResult } from "../ui/router";
 import { card, errText, errorState, loadingState, pageHeader, statRow } from "./shared";
 import { addressPill } from "../ui/components/addressPill";
-import { WQ_ADDRESS, type TokenInfo } from "../config/chain";
+import { type TokenInfo } from "../config/chain";
+import { wqAddress } from "../config/releases";
 import { pair as pairContract } from "../lib/contracts";
 import { findToken, readTokenMetadata } from "../tokens/tokenList";
 import { sanitizeAddress } from "../lib/sanitize";
@@ -126,8 +127,8 @@ function tokenLine(token: TokenInfo): HTMLElement {
 }
 
 async function resolveToken(address: string): Promise<TokenInfo> {
-  if (address.toLowerCase() === WQ_ADDRESS.toLowerCase()) {
-    return findToken(WQ_ADDRESS) ?? { address: WQ_ADDRESS, symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
+  if (address.toLowerCase() === wqAddress().toLowerCase()) {
+    return findToken(wqAddress()) ?? { address: wqAddress(), symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
   }
   const known = findToken(address);
   if (known) return known;

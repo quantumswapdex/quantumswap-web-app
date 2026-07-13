@@ -6,7 +6,7 @@
 import { clear, el } from "../ui/dom";
 import type { ViewResult } from "../ui/router";
 import { emptyState, errText, loadingState, pageHeader } from "./shared";
-import { WQ_ADDRESS } from "../config/chain";
+import { wqAddress } from "../config/releases";
 import { pair as pairContract } from "../lib/contracts";
 import { discoverAllFromFactory, discoverKnownPairs, registryStore } from "../lib/pairRegistry";
 import type { PairRecord } from "../config/pairs";
@@ -94,9 +94,9 @@ export function poolExplorerView(): ViewResult {
       if (cached) {
         const price0 = Number(cached.r1) / Number(cached.r0 || 1n);
         priceText = `${formatPrice(price0)} ${record.token1.symbol}/${record.token0.symbol}`;
-        if (record.token0.address.toLowerCase() === WQ_ADDRESS.toLowerCase()) {
+        if (record.token0.address.toLowerCase() === wqAddress().toLowerCase()) {
           tvlText = `${formatCompact(cached.r0 * 2n, record.token0.decimals)} Q`;
-        } else if (record.token1.address.toLowerCase() === WQ_ADDRESS.toLowerCase()) {
+        } else if (record.token1.address.toLowerCase() === wqAddress().toLowerCase()) {
           tvlText = `${formatCompact(cached.r1 * 2n, record.token1.decimals)} Q`;
         }
       }
