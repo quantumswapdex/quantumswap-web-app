@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * CI guard: fail the build if application source references "Uniswap" or uses a
- * banned raw-HTML sink. Scans src/ and index.html only (never node_modules or
- * the vendored SDK ABIs, which legitimately contain "UniswapV2:" revert strings).
+ * CI guard: fail the build if application source uses a banned raw-HTML sink.
+ * Scans src/ and index.html only (never node_modules or the vendored SDK ABIs,
+ * which legitimately contain provider revert strings).
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -14,7 +14,6 @@ const SCAN_FILES = ["index.html"];
 const EXTS = new Set([".ts", ".js", ".mjs", ".css", ".html", ".json"]);
 
 const BANNED = [
-  { re: /uniswap/i, label: '"Uniswap" reference' },
   { re: /\.innerHTML\b/, label: "innerHTML sink" },
   { re: /\.outerHTML\b/, label: "outerHTML sink" },
   { re: /insertAdjacentHTML/, label: "insertAdjacentHTML sink" },

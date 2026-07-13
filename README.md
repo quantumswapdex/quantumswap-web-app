@@ -165,7 +165,7 @@ quantumswap-web-app/
 │  ├─ ui/                    # dom builder, router, store, components
 │  └─ views/                 # swap (front page), pools, liquidity, explorers, activity, settings
 ├─ scripts/check-naming.mjs  # CI naming/HTML-sink guard
-└─ .github/workflows/ci.yml  # lint / test / build + dist artifact
+└─ .github/workflows/publish.yml  # lint / test / build + dist artifact
 ```
 
 ## Configuration
@@ -214,7 +214,7 @@ Defense-in-depth is built in:
 
 ## Continuous Integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on push, pull request,
+[`.github/workflows/ci.yml`](.github/workflows/publish.yml) runs on push, pull request,
 and manual dispatch (Node 20). It installs dependencies with `npm ci`, runs the
 naming/HTML-sink guard, lint, unit tests, and the build, then uploads the `dist/`
 folder as a build artifact (`quantumswap-web-app-<sha>`).

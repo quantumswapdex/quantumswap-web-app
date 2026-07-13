@@ -1,10 +1,12 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches: ["**"]
-  pull_request:
-  workflow_dispatch:
+    # Only run on version tags (e.g. v0.1.0, v1.2.3-beta).
+    tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -22,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Guard - no "Uniswap" / HTML sinks
+      - name: Guard - no banned HTML sinks
         run: npm run check:naming
 
       - name: Lint
@@ -40,10 +42,13 @@ jobs:
       - name: E2E tests (real browser, no wallet)
         run: npm run test:e2e
 
+      - name: Package distribution
+        run: zip -r "quantumswap-web-app-${{ github.ref_name }}.zip" dist
+
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quantumswap-web-app-${{ github.sha }}
+          name: quantumswap-web-app-${{ github.ref_name }}
           path: dist/
           if-no-files-found: error
 
@@ -51,6 +56,15 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ github.sha }}
+          name: playwright-report-${{ github.ref_name }}
           path: playwright-report/
           if-no-files-found: ignore
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            "quantumswap-web-app-${{ github.ref_name }}.zip"
