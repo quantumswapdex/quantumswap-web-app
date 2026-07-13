@@ -125,7 +125,7 @@ export function settingsView(): ViewResult {
       "div",
       { class: "stack" },
       card(
-        el("h3", {}, "Trading defaults"),
+        el("h3", {}, "Swap defaults"),
         el(
           "div",
           { class: "row", style: { padding: "8px 0" } },

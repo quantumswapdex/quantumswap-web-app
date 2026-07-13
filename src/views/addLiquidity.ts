@@ -12,6 +12,7 @@ import { createTokenAmountInput } from "../ui/components/tokenAmountInput";
 import { gearIcon } from "../ui/components/icons";
 import { openSettingsPopover } from "./settingsPopover";
 import { showToast } from "../ui/components/toast";
+import { trackTxToast } from "../ui/components/txToast";
 import { NATIVE_TOKEN, ROUTER_ADDRESS, WQ_TOKEN, type TokenInfo } from "../config/chain";
 import { ERC20_ABI, ROUTER_ABI, encodeErc20, encodeRouter, erc20, pair as pairContract } from "../lib/contracts";
 import { findToken, toPathAddress } from "../tokens/tokenList";
@@ -21,7 +22,7 @@ import { deadlineFrom, minWithSlippage, quote } from "../lib/quoteMath";
 import { sanitizeReserves, sanitizeAddressResponse } from "../lib/sanitizeResponse";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceipt } from "../lib/tx";
-import { recordTx } from "../lib/txStore";
+import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
 import { resolvePairAddress } from "../lib/pairRegistry";
@@ -33,6 +34,7 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
   let pairAddress: string | null = null;
   let totalSupply = 0n;
   let lastEdited: "A" | "B" = "A";
+  let submitting = false; // locks the CTA while the extension is signing/submitting
 
   const noticeBox = el("div", {});
   const detailBox = el("div", { class: "details" });
@@ -182,7 +184,7 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
     }
     const amountA = parseAmount(inputA.getAmount(), tokenA.decimals);
     const amountB = parseAmount(inputB.getAmount(), tokenB.decimals);
-    const disabled = !amountA || !amountB || amountA <= 0n || amountB <= 0n;
+    const disabled = submitting || !amountA || !amountB || amountA <= 0n || amountB <= 0n;
     actionBox.appendChild(
       el("button", { class: "cta", disabled: disabled ? true : undefined, on: { click: () => void doAdd() } }, reserves ? "Add liquidity" : "Create pair & add"),
     );
@@ -201,6 +203,8 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
     const ts = await getLatestBlockTimestamp();
     const deadline = deadlineFrom(ts);
 
+    submitting = true;
+    renderAction();
     try {
       if (tokenA.isNative || tokenB.isNative) {
         const nativeAmount = tokenA.isNative ? amountA : amountB;
@@ -209,21 +213,28 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
         const tokenAmountMin = tokenA.isNative ? amountBMin : amountAMin;
         const nativeAmountMin = tokenA.isNative ? amountAMin : amountBMin;
         await ensureApproval(toPathAddress(token), account, tokenAmount, token.symbol);
+        const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
         const data = encodeRouter("addLiquidityETH", [toPathAddress(token), tokenAmount, tokenAmountMin, nativeAmountMin, account, deadline]);
         const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: nativeAmount, abi: ROUTER_ABI });
-        recordTx(hash, `Add ${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`);
-        onSubmitted();
+        recordTx(hash, `Add ${summary}`);
+        onSubmitted(hash);
+        trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
         return;
       }
 
       await ensureApproval(toPathAddress(tokenA), account, amountA, tokenA.symbol);
       await ensureApproval(toPathAddress(tokenB), account, amountB, tokenB.symbol);
+      const summary = `${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`;
       const data = encodeRouter("addLiquidity", [toPathAddress(tokenA), toPathAddress(tokenB), amountA, amountB, amountAMin, amountBMin, account, deadline]);
       const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
-      recordTx(hash, `Add ${inputA.getAmount()} ${tokenA.symbol} + ${inputB.getAmount()} ${tokenB.symbol}`);
-      onSubmitted();
+      recordTx(hash, `Add ${summary}`);
+      onSubmitted(hash);
+      trackTxToast(hash, "liquidity", { pending: "Adding liquidity", success: "Liquidity added", failure: "Add liquidity failed" }, summary);
     } catch (err) {
       showToast({ kind: "error", title: "Add liquidity failed", message: errText(err), autoDismissMs: 7000 });
+    } finally {
+      submitting = false;
+      renderAction();
     }
   }
 
@@ -231,22 +242,33 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
     const allowanceRaw = await erc20(tokenAddr).allowance(owner, ROUTER_ADDRESS);
     const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
     if (allowance >= amount) return;
-    const toast = showToast({ kind: "pending", title: `Approve ${symbol}`, message: "Waiting for confirmation." });
     const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
     const hash = await sendTx({ to: tokenAddr, data, value: 0n, abi: ERC20_ABI });
     recordTx(hash, `Approve ${symbol}`);
+    trackTxToast(
+      hash,
+      "approve",
+      { pending: `Approving ${symbol}`, success: `${symbol} approved`, failure: `${symbol} approval failed` },
+      "Allow the router to spend your token.",
+    );
     const receipt = await waitForReceipt(hash);
     if (!receipt || receipt.status !== 1) throw new Error(`${symbol} approval was not confirmed`);
-    toast.update({ kind: "success", title: `${symbol} approved` });
   }
 
-  function onSubmitted(): void {
+  /** Clear the form after a submitted tx; the status toast is handled per action. */
+  function onSubmitted(hash: string): void {
     inputA.setAmount("", true);
     inputB.setAmount("", true);
     clear(detailBox);
-    showToast({ kind: "pending", title: "Transaction submitted", link: { href: "#/activity", label: "View activity" }, autoDismissMs: 8000 });
     inputA.refreshBalance();
     inputB.refreshBalance();
+    // Once the tx settles on-chain, reload the pool state so reserves, share,
+    // the first-provider notice, and the CTA label reflect the new pair state.
+    onTxSettled(hash, () => {
+      void loadPair();
+      inputA.refreshBalance();
+      inputB.refreshBalance();
+    });
   }
 
   const unsub = walletStore.subscribe(() => {

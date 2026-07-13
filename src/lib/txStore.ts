@@ -1,7 +1,7 @@
 /**
  * Local transaction history, reconciled against the wallet's transactionResult
- * event and receipt polling. Persisted to localStorage per session; hashes are
- * re-validated on read.
+ * event and receipt polling. Persisted cross-session to localStorage. Hashes
+ * are re-validated on read.
  */
 
 import { createStore } from "../ui/store";
@@ -23,10 +23,9 @@ const MAX_RECORDS = 50;
 
 export const txStore = createStore<TxRecord[]>(load());
 
-function load(): TxRecord[] {
+/** Parse + re-validate a persisted JSON list of records. */
+function parseRecords(raw: string): TxRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const out: TxRecord[] = [];
@@ -46,9 +45,27 @@ function load(): TxRecord[] {
   }
 }
 
+function load(): TxRecord[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const records = parseRecords(raw);
+    if (records.length === 0 && raw.length > 2) {
+      // Data was present but every entry failed validation - keep this
+      // traceable instead of silently showing an empty Activity list.
+      console.warn("[qs] tx-history present in localStorage but no entry passed validation", raw.slice(0, 200));
+    }
+    return records;
+  } catch {
+    return [];
+  }
+}
+
 function normalizeStatus(value: unknown): TxStatus {
   return value === "succeeded" || value === "failed" || value === "timeout" ? value : "pending";
 }
+
+// ---- Persistence ----------------------------------------------------------
 
 txStore.subscribe((list) => {
   try {
@@ -71,7 +88,29 @@ function setStatus(hash: string, status: TxStatus): void {
   txStore.update((list) => list.map((r) => (r.hash === hash ? { ...r, status } : r)));
 }
 
+/**
+ * Invoke `cb` once when the given tx settles (succeeded / failed / timeout).
+ * Lets views refresh their on-chain data after a submitted action confirms.
+ */
+export function onTxSettled(hash: string, cb: (status: TxStatus) => void): void {
+  const existing = txStore.get().find((r) => r.hash === hash);
+  if (existing && existing.status !== "pending") {
+    cb(existing.status);
+    return;
+  }
+  const unsub = txStore.subscribe((list) => {
+    const record = list.find((r) => r.hash === hash);
+    if (!record || record.status === "pending") return;
+    unsub();
+    cb(record.status);
+  });
+}
+
+const reconciling = new Set<string>();
+
 async function reconcile(hash: string): Promise<void> {
+  if (reconciling.has(hash)) return;
+  reconciling.add(hash);
   try {
     const receipt = await waitForReceipt(hash);
     if (!receipt) {
@@ -81,6 +120,8 @@ async function reconcile(hash: string): Promise<void> {
     setStatus(hash, receipt.status === 1 ? "succeeded" : "failed");
   } catch {
     setStatus(hash, "timeout");
+  } finally {
+    reconciling.delete(hash);
   }
 }
 

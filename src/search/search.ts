@@ -8,6 +8,7 @@
 import { clear, el } from "../ui/dom";
 import { openModal, type ModalHandle } from "../ui/components/modal";
 import { addressPill } from "../ui/components/addressPill";
+import { shortAddress } from "../lib/format";
 import { looksLikeAddress, sanitizeAddress, sanitizeQuery } from "../lib/sanitize";
 import { sanitizeAddressResponse, sanitizeReserves } from "../lib/sanitizeResponse";
 import { pair as pairContract } from "../lib/contracts";
@@ -18,9 +19,17 @@ import { router } from "../app/router";
 
 export function openGlobalSearch(rawQuery: string): void {
   const query = sanitizeQuery(rawQuery);
+  // Addresses are 66 chars; truncate them in the title so it fits the dialog.
+  const title = looksLikeAddress(query) ? `Search: ${shortAddress(query)}` : `Search: ${query}`;
   const results = el("div", { class: "stack", style: { gap: "8px" } });
   const status = el("div", { class: "dd-status" }, "Searching...");
-  const handle = openModal({ title: `Search: ${query}`, body: el("div", {}, status, results), wide: true });
+  const handle = openModal({ title, body: el("div", {}, status, results), wide: true });
+
+  // Close the dialog when a result link is clicked (token or pair) so the
+  // destination view is revealed behind it instead of staying covered.
+  results.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("a")) handle.close();
+  });
 
   if (looksLikeAddress(query)) {
     void probeAddress(query, results, status, handle);
@@ -33,11 +42,27 @@ function searchKnown(query: string, results: HTMLElement, status: HTMLElement): 
   const q = query.toLowerCase();
   clear(results);
   let count = 0;
+  const shownTokenAddr = new Set<string>();
 
   for (const token of getAllTokens()) {
     if (token.symbol.toLowerCase().includes(q) || token.name.toLowerCase().includes(q)) {
       results.appendChild(tokenResult(token.symbol, token.name, token.address));
+      shownTokenAddr.add(token.address.toLowerCase());
       count++;
+    }
+  }
+
+  // Also surface tokens that are only known as constituents of a registered
+  // pair, so a name/symbol search shows the token alongside its pair.
+  for (const rec of getRegistry()) {
+    for (const ref of [rec.token0, rec.token1]) {
+      const addr = ref.address.toLowerCase();
+      if (shownTokenAddr.has(addr)) continue;
+      if (ref.symbol.toLowerCase().includes(q)) {
+        results.appendChild(tokenResult(ref.symbol, ref.symbol, ref.address));
+        shownTokenAddr.add(addr);
+        count++;
+      }
     }
   }
 
@@ -96,7 +121,7 @@ async function probeAddress(query: string, results: HTMLElement, status: HTMLEle
         { address: t0, symbol: meta0.symbol, decimals: meta0.decimals },
         { address: t1, symbol: meta1.symbol, decimals: meta1.decimals },
       );
-      status.textContent = "Found a liquidity pair.";
+      status.textContent = "Found a pair.";
       results.appendChild(pairResult(`${meta0.symbol} / ${meta1.symbol}`, address));
       return;
     }
@@ -132,6 +157,88 @@ async function probeAddress(query: string, results: HTMLElement, status: HTMLEle
   }
 
   status.textContent = check.reason ?? "No token or pair found at that address.";
+}
+
+export interface SearchPreviewItem {
+  /** Primary line, e.g. a token symbol or "SYM / SYM" pair label. */
+  label: string;
+  /** Secondary line, e.g. the token name or "Liquidity pair". */
+  detail: string;
+}
+
+/**
+ * Lightweight search used by the header's live dropdown. Name/symbol queries
+ * scan the known token list and pair registry; address queries also probe
+ * on-chain (pair first, then token). Returns compact preview items only -
+ * clicking one opens the full results modal via `openGlobalSearch`.
+ */
+export async function searchPreview(rawQuery: string): Promise<SearchPreviewItem[]> {
+  const query = sanitizeQuery(rawQuery);
+  if (!query) return [];
+
+  if (!looksLikeAddress(query)) {
+    const q = query.toLowerCase();
+    const items: SearchPreviewItem[] = [];
+    const shownTokenAddr = new Set<string>();
+    for (const token of getAllTokens()) {
+      if (token.symbol.toLowerCase().includes(q) || token.name.toLowerCase().includes(q)) {
+        items.push({ label: token.symbol, detail: token.name });
+        shownTokenAddr.add(token.address.toLowerCase());
+      }
+    }
+    // Surface tokens that are only known as constituents of a registered pair.
+    for (const rec of getRegistry()) {
+      for (const ref of [rec.token0, rec.token1]) {
+        const addr = ref.address.toLowerCase();
+        if (shownTokenAddr.has(addr)) continue;
+        if (ref.symbol.toLowerCase().includes(q)) {
+          items.push({ label: ref.symbol, detail: "Token" });
+          shownTokenAddr.add(addr);
+        }
+      }
+    }
+    for (const rec of getRegistry()) {
+      const label = `${rec.token0.symbol} / ${rec.token1.symbol}`;
+      if (label.toLowerCase().includes(q)) items.push({ label, detail: "Liquidity pair" });
+    }
+    return items;
+  }
+
+  const address = sanitizeAddress(query);
+  if (!address) return [];
+
+  const knownToken = getAllTokens().find((t) => t.address.toLowerCase() === address.toLowerCase());
+  if (knownToken) return [{ label: knownToken.symbol, detail: knownToken.name }];
+
+  const knownPair = getRegistry().find((p) => p.pairAddress.toLowerCase() === address.toLowerCase());
+  if (knownPair) {
+    return [{ label: `${knownPair.token0.symbol} / ${knownPair.token1.symbol}`, detail: "Liquidity pair" }];
+  }
+
+  // On-chain: pair probe first, then token probe.
+  try {
+    const p = pairContract(address);
+    const [t0Raw, t1Raw, reservesRaw] = await Promise.all([
+      p.token0().catch(() => null),
+      p.token1().catch(() => null),
+      p.getReserves().catch(() => null),
+    ]);
+    const t0 = sanitizeAddressResponse(t0Raw);
+    const t1 = sanitizeAddressResponse(t1Raw);
+    if (t0 && t1 && sanitizeReserves(reservesRaw)) {
+      const [meta0, meta1] = await Promise.all([safeMeta(t0), safeMeta(t1)]);
+      return [{ label: `${meta0.symbol} / ${meta1.symbol}`, detail: "Liquidity pair" }];
+    }
+  } catch {
+    /* not a pair */
+  }
+  try {
+    const check = await checkImport(address);
+    if (check.ok && check.token) return [{ label: check.token.symbol, detail: check.token.name }];
+  } catch {
+    /* not a token */
+  }
+  return [];
 }
 
 async function safeMeta(address: string): Promise<{ symbol: string; decimals: number }> {

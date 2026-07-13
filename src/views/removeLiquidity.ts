@@ -8,6 +8,7 @@ import { clear, el } from "../ui/dom";
 import type { RouteContext, ViewResult } from "../ui/router";
 import { card, errText, errorState, loadingState, pageHeader, statRow } from "./shared";
 import { showToast } from "../ui/components/toast";
+import { trackTxToast } from "../ui/components/txToast";
 import { ROUTER_ADDRESS, WQ_ADDRESS, type TokenInfo } from "../config/chain";
 import { PAIR_ABI, ROUTER_ABI, encodeErc20, encodeRouter, pair as pairContract } from "../lib/contracts";
 import { findToken, readTokenMetadata, toPathAddress } from "../tokens/tokenList";
@@ -17,7 +18,7 @@ import { formatAmount } from "../lib/format";
 import { deadlineFrom, minWithSlippage } from "../lib/quoteMath";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceipt } from "../lib/tx";
-import { recordTx } from "../lib/txStore";
+import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
 
@@ -44,6 +45,7 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
   let reserveB = 0n;
   let totalSupply = 0n;
   let lpBalance = 0n;
+  let submitting = false; // locks the CTA while the extension is signing/submitting
 
   async function load(): Promise<void> {
     const account = walletStore.get().account;
@@ -139,7 +141,7 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
         el("p", { class: "cf-note" }, "The router needs a one-time approval to spend your LP tokens before removing."),
         el(
           "button",
-          { class: "dlg-cta", on: { click: () => void doRemove(liquidity, amountA, amountB) } },
+          { class: "dlg-cta", disabled: submitting ? true : undefined, on: { click: () => void doRemove(liquidity, amountA, amountB) } },
           "Approve & remove",
         ),
       ),
@@ -155,6 +157,8 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
     const ts = await getLatestBlockTimestamp();
     const deadline = deadlineFrom(ts);
 
+    submitting = true;
+    render();
     try {
       // Approve the router to burn the LP tokens.
       await ensureLpApproval(account, liquidity);
@@ -176,9 +180,20 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
       }
       const hash = await sendTx({ to: ROUTER_ADDRESS, data, value: 0n, abi: ROUTER_ABI });
       recordTx(hash, `Remove ${percent}% ${tokenA.symbol}/${tokenB.symbol} liquidity`);
-      showToast({ kind: "pending", title: "Removal submitted", link: { href: "#/activity", label: "View activity" }, autoDismissMs: 8000 });
+      trackTxToast(
+        hash,
+        "remove",
+        { pending: "Removing liquidity", success: "Liquidity removed", failure: "Remove liquidity failed" },
+        `${percent}% of ${tokenA.symbol}/${tokenB.symbol} \u2192 ~${formatAmount(amountA, tokenA.decimals, 6)} ${tokenA.symbol} + ~${formatAmount(amountB, tokenB.decimals, 6)} ${tokenB.symbol}`,
+      );
+      // Reload the position once the tx settles so the LP balance and
+      // estimated amounts reflect the on-chain result.
+      onTxSettled(hash, () => void load());
     } catch (err) {
       showToast({ kind: "error", title: "Remove liquidity failed", message: errText(err), autoDismissMs: 7000 });
+    } finally {
+      submitting = false;
+      render();
     }
   }
 
@@ -187,13 +202,17 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
     const allowanceRaw = await p.allowance(owner, ROUTER_ADDRESS);
     const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
     if (allowance >= liquidity) return;
-    const toast = showToast({ kind: "pending", title: "Approve LP tokens", message: "Waiting for confirmation." });
     const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
     const hash = await sendTx({ to: pairAddress!, data, value: 0n, abi: PAIR_ABI });
     recordTx(hash, "Approve LP tokens");
+    trackTxToast(
+      hash,
+      "approve",
+      { pending: "Approving LP tokens", success: "LP tokens approved", failure: "LP token approval failed" },
+      tokenA && tokenB ? `${tokenA.symbol}/${tokenB.symbol} LP` : undefined,
+    );
     const receipt = await waitForReceipt(hash);
     if (!receipt || receipt.status !== 1) throw new Error("LP approval was not confirmed");
-    toast.update({ kind: "success", title: "LP tokens approved" });
   }
 
   const unsub = walletStore.subscribe(() => void load());

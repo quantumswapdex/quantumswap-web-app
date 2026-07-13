@@ -11,6 +11,7 @@ import { createTokenAmountInput } from "../ui/components/tokenAmountInput";
 import { flipIcon, gearIcon } from "../ui/components/icons";
 import { openSettingsPopover } from "./settingsPopover";
 import { showToast } from "../ui/components/toast";
+import { trackTxToast } from "../ui/components/txToast";
 import {
   NATIVE_TOKEN,
   WQ_TOKEN,
@@ -35,7 +36,7 @@ import { formatAmount, formatPrice } from "../lib/format";
 import { deadlineFrom, minWithSlippage } from "../lib/quoteMath";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceipt } from "../lib/tx";
-import { recordTx } from "../lib/txStore";
+import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
 
@@ -45,6 +46,7 @@ export function swapView(): ViewResult {
   let quotedOut = 0n;
   let pairMissing = false;
   let quoteToken = 0; // increments to guard against out-of-order async quotes
+  let submitting = false; // locks the CTA while the extension is signing/submitting
 
   const detailBox = el("div", { class: "details" });
   const actionBox = el("div", {});
@@ -79,13 +81,16 @@ export function swapView(): ViewResult {
       "aria-label": "Flip tokens",
       on: {
         click: () => {
+          // Carry the estimated "To" value over as the new "From" amount so
+          // the form repopulates and re-quotes in the flipped direction.
+          const prevToAmount = toInput.getAmount();
           const f = fromInput.getToken();
           const t = toInput.getToken();
           fromInput.setToken(t);
           toInput.setToken(f);
           fromToken = t ?? fromToken;
           toToken = f ?? toToken;
-          fromInput.setAmount("", true);
+          fromInput.setAmount(prevToAmount, true);
           toInput.setAmount("", true);
           refreshQuote();
         },
@@ -200,7 +205,7 @@ export function swapView(): ViewResult {
     }
     const amountIn = parseAmount(fromInput.getAmount(), fromToken.decimals);
     const label = isWrap() ? "Wrap" : isUnwrap() ? "Unwrap" : "Swap";
-    const disabled = !amountIn || amountIn <= 0n || (pairMissing && !isWrap() && !isUnwrap()) || (!isWrap() && !isUnwrap() && quotedOut <= 0n);
+    const disabled = submitting || !amountIn || amountIn <= 0n || (pairMissing && !isWrap() && !isUnwrap()) || (!isWrap() && !isUnwrap() && quotedOut <= 0n);
     actionBox.appendChild(
       el(
         "button",
@@ -220,17 +225,23 @@ export function swapView(): ViewResult {
     const amountIn = parseAmount(fromInput.getAmount(), fromToken.decimals);
     if (!amountIn || amountIn <= 0n) return;
 
+    submitting = true;
+    renderAction();
     try {
       if (isWrap()) {
+        const amount = fromInput.getAmount();
         const hash = await sendTx({ to: WQ_ADDRESS, data: encodeWq("deposit", []), value: amountIn, abi: WQ_ABI });
-        recordTx(hash, `Wrap ${fromInput.getAmount()} Q`);
-        toastSubmitted();
+        recordTx(hash, `Wrap ${amount} Q`);
+        onSubmitted(hash);
+        trackTxToast(hash, "wrap", { pending: "Wrapping", success: "Wrap complete", failure: "Wrap failed" }, `${amount} Q \u2192 WQ`);
         return;
       }
       if (isUnwrap()) {
+        const amount = fromInput.getAmount();
         const hash = await sendTx({ to: WQ_ADDRESS, data: encodeWq("withdraw", [amountIn]), value: 0n, abi: WQ_ABI });
-        recordTx(hash, `Unwrap ${fromInput.getAmount()} WQ`);
-        toastSubmitted();
+        recordTx(hash, `Unwrap ${amount} WQ`);
+        onSubmitted(hash);
+        trackTxToast(hash, "wrap", { pending: "Unwrapping", success: "Unwrap complete", failure: "Unwrap failed" }, `${amount} WQ \u2192 Q`);
         return;
       }
 
@@ -256,11 +267,22 @@ export function swapView(): ViewResult {
         data = encodeRouter("swapExactTokensForTokens", [amountIn, minOut, path, account, deadline]);
       }
 
+      const amount = fromInput.getAmount();
+      const outAmount = toInput.getAmount();
       const hash = await sendTx({ to: ROUTER_ADDRESS, data, value, abi: ROUTER_ABI });
-      recordTx(hash, `Swap ${fromInput.getAmount()} ${fromToken.symbol} for ${toToken.symbol}`);
-      toastSubmitted();
+      recordTx(hash, `Swap ${amount} ${fromToken.symbol} for ${toToken.symbol}`);
+      onSubmitted(hash);
+      trackTxToast(
+        hash,
+        "swap",
+        { pending: "Swapping", success: "Swap complete", failure: "Swap failed" },
+        `${amount} ${fromToken.symbol} \u2192 ${outAmount ? `~${outAmount} ` : ""}${toToken.symbol}`,
+      );
     } catch (err) {
       showToast({ kind: "error", title: "Swap failed", message: errText(err), autoDismissMs: 7000 });
+    } finally {
+      submitting = false;
+      renderAction();
     }
   }
 
@@ -268,29 +290,32 @@ export function swapView(): ViewResult {
     const allowanceRaw = await erc20(tokenAddr).allowance(owner, ROUTER_ADDRESS);
     const allowance = typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw ?? 0);
     if (allowance >= amount) return;
-    const toast = showToast({ kind: "pending", title: "Approval required", message: "Approve the router to spend your token." });
+    const symbol = fromToken.symbol;
     const data = encodeErc20("approve", [ROUTER_ADDRESS, qc.MaxUint256]);
     const hash = await sendTx({ to: tokenAddr, data, value: 0n, abi: ERC20_ABI });
-    recordTx(hash, `Approve ${fromToken.symbol}`);
-    toast.update({ kind: "pending", title: "Approving...", message: "Waiting for confirmation." });
+    recordTx(hash, `Approve ${symbol}`);
+    trackTxToast(
+      hash,
+      "approve",
+      { pending: `Approving ${symbol}`, success: `${symbol} approved`, failure: `${symbol} approval failed` },
+      "Allow the router to spend your token.",
+    );
     const receipt = await waitForReceipt(hash);
-    if (!receipt || receipt.status !== 1) throw new Error("Token approval was not confirmed");
-    toast.update({ kind: "success", title: "Approved", message: "Router can now spend your token." });
+    if (!receipt || receipt.status !== 1) throw new Error(`${symbol} approval was not confirmed`);
   }
 
-  function toastSubmitted(): void {
+  /** Clear the form after a submitted tx; the status toast is handled per action. */
+  function onSubmitted(hash: string): void {
     fromInput.setAmount("", true);
     toInput.setAmount("", true);
     clear(detailBox);
-    showToast({
-      kind: "pending",
-      title: "Transaction submitted",
-      message: "Track it in Activity.",
-      link: { href: `#/activity`, label: "View activity" },
-      autoDismissMs: 8000,
-    });
     fromInput.refreshBalance();
     toInput.refreshBalance();
+    // Refresh balances again once the tx settles on-chain.
+    onTxSettled(hash, () => {
+      fromInput.refreshBalance();
+      toInput.refreshBalance();
+    });
   }
 
   const unsub = walletStore.subscribe(() => {

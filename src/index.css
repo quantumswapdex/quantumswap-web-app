@@ -175,7 +175,7 @@ button {
   color: var(--text);
   font-family: var(--body);
   font-size: 14px;
-  padding: 0 12px 0 38px;
+  padding: 0 34px 0 38px; /* right padding reserves room for the busy spinner */
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -185,6 +185,71 @@ button {
 .search input:focus {
   border-color: rgba(155, 115, 255, 0.85);
   box-shadow: 0 0 0 1px rgba(155, 115, 255, 0.35), 0 0 14px -4px rgba(108, 59, 255, 0.7);
+}
+/* Busy spinner on the right edge of the search box (visible while looking up).
+   Centered with margin (not translateY) because the spin animation owns transform. */
+.search .search-spin {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  margin-top: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #8c64ff;
+  animation: qs-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+/* Live results dropdown below the search box. */
+.search-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgb(12, 12, 20);
+  border: 1px solid rgb(143, 138, 170);
+  border-radius: 12px;
+  box-shadow: var(--pop-shadow), 0 0 24px -8px rgba(108, 59, 255, 0.55);
+  z-index: 40;
+}
+.search-dd-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #fff;
+  font-family: var(--body);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.search-dd-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.search-dd-row .sd-sym {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.search-dd-row .sd-name {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.search-dd-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .actions {
@@ -665,6 +730,27 @@ main {
   border-color: rgba(155, 115, 255, 0.85);
   box-shadow: 0 0 0 1px rgba(155, 115, 255, 0.35);
 }
+/* Wrapper so a busy spinner can sit on the right edge of the search input. */
+.dd-search-wrap {
+  position: relative;
+}
+.dd-search-wrap .dd-search {
+  padding-right: 32px;
+}
+/* Centered with margin (not translateY) because the spin animation owns transform. */
+.dd-spin {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  margin-top: -7px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #8c64ff;
+  animation: qs-spin 0.9s linear infinite;
+  pointer-events: none;
+}
 .dd-status {
   min-height: 16px;
   font-size: 11.5px;
@@ -897,6 +983,10 @@ main {
   font-weight: 600;
   font-size: 16px;
   color: #fff;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Settings dialog fields */
@@ -1127,6 +1217,42 @@ main {
 .toast.t-pending {
   border-color: rgba(251, 191, 36, 0.4);
 }
+
+/* Per-action accent: colored left stripe + glow + spinner/dot tint, so each
+   action (swap, wrap, liquidity, ...) is recognizable at a glance. The
+   success/error border color from the kind classes above still applies. */
+.toast.has-accent {
+  border-left: 3px solid var(--t-accent, var(--accent));
+  box-shadow:
+    var(--pop-shadow),
+    0 0 26px -14px var(--t-accent, var(--accent));
+}
+.toast.a-swap {
+  --t-accent: #8c64ff;
+}
+.toast.a-wrap {
+  --t-accent: #00e5ff;
+}
+.toast.a-liquidity {
+  --t-accent: #34d399;
+}
+.toast.a-remove {
+  --t-accent: #ff8a5c;
+}
+.toast.a-pair {
+  --t-accent: #4f8bff;
+}
+.toast.a-approve {
+  --t-accent: #fbbf24;
+}
+.toast .t-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--t-accent, var(--accent));
+  box-shadow: 0 0 8px var(--t-accent, var(--accent));
+  flex-shrink: 0;
+}
 .toast .t-title {
   display: flex;
   align-items: center;
@@ -1140,8 +1266,8 @@ main {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  border: 2px solid rgba(140, 100, 255, 0.3);
-  border-top-color: #8c64ff;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--t-accent, #8c64ff);
   animation: qs-spin 0.9s linear infinite;
   flex-shrink: 0;
 }
@@ -1388,6 +1514,8 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--mono);
   font-size: 11px;
   color: rgba(255, 255, 255, 0.6);
@@ -1396,6 +1524,12 @@ main {
   border-radius: 7px;
   padding: 4px 8px;
   white-space: nowrap;
+}
+/* The address span must never push the pill past its container. */
+.pill > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pill.wrap {
   white-space: normal;

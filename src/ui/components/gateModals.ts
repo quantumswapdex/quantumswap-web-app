@@ -49,7 +49,7 @@ export function openInstallModal(): ModalHandle {
         el(
           "a",
           { class: "btn btn-primary", href: EXTENSION_INSTALL_URL, target: "_blank", rel: "noopener noreferrer" },
-          "Install the QuantumSwap browser extension",
+          "Install",
         ),
         el("button", { class: "btn btn-ghost", on: { click: () => location.reload() } }, "Reload"),
       ),

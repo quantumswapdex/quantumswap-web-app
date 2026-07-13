@@ -20,7 +20,7 @@ import {
   type WalletState,
 } from "../../wallet/wallet";
 import { sanitizeQuery } from "../../lib/sanitize";
-import { openGlobalSearch } from "../../search/search";
+import { openGlobalSearch, searchPreview, type SearchPreviewItem } from "../../search/search";
 import { showToast } from "./toast";
 
 const DOWNLOAD_WALLET_URL = "https://quantumswap.com/downloads.html";
@@ -35,8 +35,8 @@ interface NavItem {
 const NAV: NavItem[] = [
   { label: "Home", href: "/", match: (h) => h === "#/" || h === "" || h === "#" },
   { label: "Swap", href: "#/swap", match: (h) => h.startsWith("#/swap") },
-  { label: "Pool", href: "#/pools", match: (h) => h.startsWith("#/pools") },
-  { label: "Explore", href: "#/explore/pools", match: (h) => h.startsWith("#/explore/pools") },
+  { label: "Liquidity", href: "#/pools", match: (h) => h.startsWith("#/pools") },
+  { label: "Pools", href: "#/explore/pools", match: (h) => h.startsWith("#/explore/pools") },
   { label: "Tokens", href: "#/explore/tokens", match: (h) => h.startsWith("#/explore/tokens") },
   { label: "Positions", href: "#/positions", match: (h) => h.startsWith("#/positions") },
   { label: "Activity", href: "#/activity", match: (h) => h.startsWith("#/activity") },
@@ -46,6 +46,15 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
   const outlet = el("div", { class: "outlet" });
 
   // ---------- Search ----------
+  // Live search: debounce keystrokes, show a right-edge spinner while looking
+  // up, and render preview results in a dropdown below the box. Clicking a
+  // result (or pressing Enter) opens the full search results dialog.
+  const SEARCH_DEBOUNCE_MS = 700;
+  const searchSpinner = el("span", { class: "search-spin hidden", "aria-hidden": "true" });
+  const searchDropdown = el("div", { class: "search-dd hidden", role: "listbox", "aria-label": "Search results" });
+  let searchDebounce = 0;
+  let searchSeq = 0;
+
   const searchInput = el("input", {
     type: "search",
     placeholder: "Search token or pair by address / name",
@@ -57,14 +66,81 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
         if ((e as KeyboardEvent).key === "Enter") {
           const q = sanitizeQuery(searchInput.value);
           if (q) {
+            closeSearchDropdown();
             setSearchOpen(false);
             openGlobalSearch(q);
           }
         }
       },
+      input: () => {
+        window.clearTimeout(searchDebounce);
+        searchSeq++; // invalidate any in-flight lookup
+        if (!sanitizeQuery(searchInput.value)) {
+          closeSearchDropdown();
+          return;
+        }
+        // Show the busy spinner right away so the user sees feedback during the
+        // debounce window, not only after the lookup starts.
+        searchSpinner.classList.remove("hidden");
+        searchDebounce = window.setTimeout(() => void runLiveSearch(), SEARCH_DEBOUNCE_MS);
+      },
     },
   }) as HTMLInputElement;
-  const searchBox = el("div", { class: "search" }, searchIcon(16), searchInput);
+  const searchBox = el("div", { class: "search" }, searchIcon(16), searchInput, searchSpinner, searchDropdown);
+
+  function closeSearchDropdown(): void {
+    window.clearTimeout(searchDebounce);
+    searchSeq++; // invalidate any in-flight lookup
+    searchDropdown.classList.add("hidden");
+    searchDropdown.replaceChildren();
+    searchSpinner.classList.add("hidden");
+  }
+
+  async function runLiveSearch(): Promise<void> {
+    const q = sanitizeQuery(searchInput.value);
+    if (!q) {
+      closeSearchDropdown();
+      return;
+    }
+    const seq = ++searchSeq;
+    searchSpinner.classList.remove("hidden");
+    let items: SearchPreviewItem[] = [];
+    try {
+      items = await searchPreview(q);
+    } catch {
+      items = [];
+    }
+    if (seq !== searchSeq) return; // superseded by newer input
+    searchSpinner.classList.add("hidden");
+    searchDropdown.replaceChildren();
+    if (items.length === 0) {
+      searchDropdown.appendChild(
+        el("div", { class: "search-dd-empty" }, "No known tokens or pairs match. Press Enter to search on-chain."),
+      );
+    } else {
+      for (const item of items.slice(0, 8)) {
+        searchDropdown.appendChild(
+          el(
+            "button",
+            {
+              class: "search-dd-row",
+              role: "option",
+              on: {
+                click: () => {
+                  closeSearchDropdown();
+                  setSearchOpen(false);
+                  openGlobalSearch(q);
+                },
+              },
+            },
+            el("span", { class: "sd-sym" }, item.label),
+            el("span", { class: "sd-name" }, item.detail),
+          ),
+        );
+      }
+    }
+    searchDropdown.classList.remove("hidden");
+  }
 
   const searchToggle = el(
     "button",
@@ -292,6 +368,7 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
     setMenuOpen(false);
     setAddrOpen(false);
     setSearchOpen(false);
+    closeSearchDropdown();
   });
 
   // Outside click / Escape close all floating layers.
@@ -299,13 +376,17 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
     const t = e.target as HTMLElement;
     if (!burgerMenu.contains(t) && t !== burger) setMenuOpen(false);
     if (!addrWrap.contains(t)) setAddrOpen(false);
-    if (!searchBox.contains(t) && !searchToggle.contains(t)) setSearchOpen(false);
+    if (!searchBox.contains(t) && !searchToggle.contains(t)) {
+      setSearchOpen(false);
+      closeSearchDropdown();
+    }
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       setMenuOpen(false);
       setAddrOpen(false);
       setSearchOpen(false);
+      closeSearchDropdown();
     }
   });
 

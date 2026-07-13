@@ -14,6 +14,7 @@ import { sanitizeReserves } from "../lib/sanitizeResponse";
 import { formatCompact, formatPrice } from "../lib/format";
 import { walletStore } from "../wallet/wallet";
 import { sanitizeQuery } from "../lib/sanitize";
+import { txStore } from "../lib/txStore";
 
 export function poolExplorerView(): ViewResult {
   let query = "";
@@ -173,6 +174,19 @@ export function poolExplorerView(): ViewResult {
 
   const unsub = registryStore.subscribe(() => renderTable());
   const unsubWallet = walletStore.subscribe(() => void discover());
+
+  // When a transaction confirms (swap, add/remove liquidity, ...), the cached
+  // reserves are stale: drop the cache so the table re-reads on next render.
+  let txStatuses = new Map(txStore.get().map((r) => [r.hash, r.status]));
+  const unsubTx = txStore.subscribe((list) => {
+    const settled = list.some((r) => txStatuses.get(r.hash) === "pending" && r.status === "succeeded");
+    txStatuses = new Map(list.map((r) => [r.hash, r.status]));
+    if (settled) {
+      reservesCache.clear();
+      renderTable();
+    }
+  });
+
   void discover();
 
   return {
@@ -182,6 +196,7 @@ export function poolExplorerView(): ViewResult {
     cleanup: () => {
       unsub();
       unsubWallet();
+      unsubTx();
     },
   };
 }

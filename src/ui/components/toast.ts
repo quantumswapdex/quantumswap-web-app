@@ -7,8 +7,17 @@ import { el, safeUrl } from "../dom";
 
 export type ToastKind = "info" | "pending" | "success" | "error";
 
+/** Per-action color identity (stripe, glow, spinner/dot color). */
+export type ToastAccent = "swap" | "wrap" | "liquidity" | "remove" | "pair" | "approve";
+
 export interface ToastHandle {
-  update: (patch: { kind?: ToastKind; title?: string; message?: string; link?: { href: string; label: string } }) => void;
+  update: (patch: {
+    kind?: ToastKind;
+    title?: string;
+    message?: string;
+    link?: { href: string; label: string };
+    autoDismissMs?: number;
+  }) => void;
   dismiss: () => void;
 }
 
@@ -30,6 +39,7 @@ const KIND_CLASS: Record<ToastKind, string> = {
 
 export function showToast(opts: {
   kind?: ToastKind;
+  accent?: ToastAccent;
   title: string;
   message?: string;
   link?: { href: string; label: string };
@@ -44,12 +54,14 @@ export function showToast(opts: {
 
   let timer: number | undefined;
   let currentKind: ToastKind = opts.kind ?? "info";
+  const accentClass = opts.accent ? ` has-accent a-${opts.accent}` : "";
 
   function render(kind: ToastKind, title: string, message?: string, link?: { href: string; label: string }): void {
     currentKind = kind;
-    card.setAttribute("class", `toast${KIND_CLASS[kind]}`);
+    card.setAttribute("class", `toast${KIND_CLASS[kind]}${accentClass}`);
     titleRow.replaceChildren();
     if (kind === "pending") titleRow.appendChild(el("span", { class: "spinner" }));
+    else if (opts.accent) titleRow.appendChild(el("span", { class: "t-dot" }));
     titleRow.appendChild(el("span", {}, title));
     msgEl.replaceChildren();
     if (message) msgEl.appendChild(el("span", {}, message + (link ? " " : "")));
@@ -73,9 +85,9 @@ export function showToast(opts: {
     dismiss,
     update: (patch) => {
       render(patch.kind ?? currentKind, patch.title ?? titleRow.textContent ?? "", patch.message ?? msgEl.textContent ?? undefined, patch.link);
-      if (patch.kind === "success" || patch.kind === "error") {
+      if (patch.autoDismissMs || patch.kind === "success" || patch.kind === "error") {
         if (timer) window.clearTimeout(timer);
-        timer = window.setTimeout(dismiss, 8000);
+        timer = window.setTimeout(dismiss, patch.autoDismissMs ?? 8000);
       }
     },
   };

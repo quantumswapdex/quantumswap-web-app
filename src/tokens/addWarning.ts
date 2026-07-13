@@ -14,7 +14,7 @@ function warnBox(): HTMLElement {
   return el(
     "div",
     { class: "warn-box" },
-    el("div", { class: "warn-title" }, "Trade at your own risk"),
+    el("div", { class: "warn-title" }, "Use at your own risk"),
     el(
       "p",
       {},

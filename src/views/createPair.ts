@@ -5,18 +5,20 @@ import type { ViewResult } from "../ui/router";
 import { errText } from "./shared";
 import { chevronDownIcon, coinIcon } from "../ui/components/icons";
 import { showToast } from "../ui/components/toast";
+import { trackTxToast } from "../ui/components/txToast";
 import { NATIVE_TOKEN, WQ_TOKEN, FACTORY_ADDRESS, type TokenInfo } from "../config/chain";
 import { FACTORY_ABI, encodeFactory } from "../lib/contracts";
 import { openTokenSelector } from "../tokens/tokenSelector";
 import { toPathAddress } from "../tokens/tokenList";
 import { sendTx } from "../lib/tx";
-import { recordTx } from "../lib/txStore";
+import { onTxSettled, recordTx } from "../lib/txStore";
 import { connectWallet, walletStore } from "../wallet/wallet";
 import { resolvePairAddress } from "../lib/pairRegistry";
 
 export function createPairView(): ViewResult {
   let tokenA: TokenInfo | null = NATIVE_TOKEN;
   let tokenB: TokenInfo | null = WQ_TOKEN;
+  let submitting = false; // locks the CTA while the extension is signing/submitting
 
   const status = el("div", { class: "dd-status", style: { marginTop: "10px" } });
   const actionBox = el("div", {});
@@ -59,7 +61,7 @@ export function createPairView(): ViewResult {
 
     const create = el(
       "button",
-      { class: "cta", on: { click: () => void doCreate() } },
+      { class: "cta", disabled: submitting ? true : undefined, on: { click: () => void doCreate() } },
       "Create pair",
     );
     actionBox.appendChild(create);
@@ -68,8 +70,21 @@ export function createPairView(): ViewResult {
     try {
       const existing = await resolvePairAddress(tokenA, tokenB);
       if (existing) {
-        status.textContent = "A pair already exists for these tokens. ";
-        status.appendChild(el("a", { class: "link", href: `#/pools/add/${tokenA.address}/${tokenB.address}` }, "Add liquidity"));
+        clear(status);
+        status.appendChild(
+          el(
+            "div",
+            { class: "warn-box" },
+            el("div", { class: "warn-title" }, "A pair already exists for these tokens"),
+            el(
+              "p",
+              {},
+              "You cannot create it again. ",
+              el("a", { class: "link", href: `#/pools/add/${tokenA.address}/${tokenB.address}` }, "Add liquidity to the existing pair"),
+              ".",
+            ),
+          ),
+        );
         create.setAttribute("disabled", "");
       }
     } catch {
@@ -79,13 +94,26 @@ export function createPairView(): ViewResult {
 
   async function doCreate(): Promise<void> {
     if (!tokenA || !tokenB) return;
+    submitting = true;
+    void render();
     try {
       const data = encodeFactory("createPair", [toPathAddress(tokenA), toPathAddress(tokenB)]);
       const hash = await sendTx({ to: FACTORY_ADDRESS, data, value: 0n, abi: FACTORY_ABI });
       recordTx(hash, `Create pair ${tokenA.symbol}/${tokenB.symbol}`);
-      showToast({ kind: "pending", title: "Pair creation submitted", link: { href: "#/activity", label: "View activity" }, autoDismissMs: 8000 });
+      trackTxToast(
+        hash,
+        "pair",
+        { pending: "Creating pair", success: "Pair created", failure: "Create pair failed" },
+        `${tokenA.symbol}/${tokenB.symbol}`,
+      );
+      // Re-render once the tx settles so the "pair already exists" state and
+      // the CTA reflect the on-chain result.
+      onTxSettled(hash, () => void render());
     } catch (err) {
       showToast({ kind: "error", title: "Create pair failed", message: errText(err), autoDismissMs: 7000 });
+    } finally {
+      submitting = false;
+      void render();
     }
   }
 

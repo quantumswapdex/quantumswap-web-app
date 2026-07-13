@@ -26,6 +26,7 @@ export function openTokenSelector(opts: {
 }): void {
   const listWrap = el("div", { class: "dd-list" });
   const statusEl = el("div", { class: "dd-status" });
+  const spinner = el("span", { class: "dd-spin hidden", "aria-hidden": "true" });
 
   const searchInput = el("input", {
     class: "dd-search",
@@ -33,12 +34,13 @@ export function openTokenSelector(opts: {
     placeholder: "Search name / symbol or paste address",
     autocomplete: "off",
     spellcheck: "false",
-    on: { input: () => renderList() },
+    on: { input: () => void renderList() },
   }) as HTMLInputElement;
+  const searchWrap = el("div", { class: "dd-search-wrap" }, searchInput, spinner);
 
   const handle = openModal({
     title: "Select a token",
-    body: el("div", {}, searchInput, statusEl, listWrap),
+    body: el("div", {}, searchWrap, statusEl, listWrap),
     // Wider than the default dialog so full names and balances fit comfortably.
     wide: true,
   });
@@ -48,7 +50,11 @@ export function openTokenSelector(opts: {
     opts.onSelect(token);
   }
 
+  let searchSeq = 0; // guards against out-of-order async lookups
+
   async function renderList(): Promise<void> {
+    const seq = ++searchSeq;
+    spinner.classList.add("hidden");
     const query = sanitizeQuery(searchInput.value).toLowerCase();
     const exclude = opts.excludeAddress?.toLowerCase();
     const all = getAllTokens().filter((t) => t.address.toLowerCase() !== exclude);
@@ -68,7 +74,10 @@ export function openTokenSelector(opts: {
     // Offer on-chain import when the query is an unknown address.
     if (filtered.length === 0 && looksLikeAddress(searchInput.value)) {
       statusEl.textContent = "Looking up token on-chain...";
+      spinner.classList.remove("hidden");
       const result = await checkImport(searchInput.value.trim());
+      if (seq !== searchSeq) return; // superseded by newer input
+      spinner.classList.add("hidden");
       if (result.ok && result.token) {
         statusEl.textContent = "";
         listWrap.appendChild(
