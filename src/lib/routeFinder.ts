@@ -1,31 +1,42 @@
 /**
- * Client-side multi-hop path finder for swaps. The on-chain
- * QuantumSwapV2Router02 already accepts multi-token `path` arrays, so routing
- * is purely a matter of choosing a good path client-side. This module
- * enumerates simple paths over the known-pair graph (plus two baseline paths
- * for cold start), probes each with `getAmountsOut`, and returns the path that
- * yields the most output.
+ * Client-side path finder for swaps, using the pair-existence model shared with
+ * the browser extension: take the direct pair when it exists, otherwise BFS the
+ * pair-existence graph (registry-known pairs plus on-demand factory.getPair
+ * checks over a bounded candidate set) for the SHORTEST route, then quote that
+ * single path with getAmountsOut. Pair existence is amount-independent, so
+ * routes cache well and stay consistent between quoting and submission.
  */
 
-import { type TokenInfo } from "../config/chain";
-import { wqAddress } from "../config/releases";
+import { ZERO_ADDRESS_32, type TokenInfo } from "../config/chain";
+import { factoryAddress, wqAddress } from "../config/releases";
 import { getAllTokens, toPathAddress } from "../tokens/tokenList";
-import { getRegistry } from "./pairRegistry";
-import { router as routerContract } from "./contracts";
+import { findPairRecord, getRegistry } from "./pairRegistry";
+import { factory, router as routerContract } from "./contracts";
+import { sanitizeAddressResponse } from "./sanitizeResponse";
 
-/** Hard cap on candidate paths probed per quote to bound RPC load. */
-const MAX_ROUTE_PROBES = 32;
+/** Cap on intermediate hop candidates per route search (bounds getPair fan-out). */
+const MAX_INTERMEDIATE_CANDIDATES = 6;
+
+/** Pair-existence results are cached briefly; pools rarely appear or disappear. */
+const PAIR_EXISTS_CACHE_TTL_MS = 60_000;
+const pairExistsCache = new Map<string, { exists: boolean; at: number }>();
+
+/** Reset the pair-existence cache (tests; release switches are keyed already). */
+export function clearRouteCache(): void {
+  pairExistsCache.clear();
+}
 
 export interface RouteResult {
   /** WQ-substituted addresses; length 2..maxTokens. */
   path: string[];
-  /** Final output amount from getAmountsOut. */
+  /** Final output amount from getAmountsOut over `path`. */
   out: bigint;
 }
 
 /**
- * Find the best swap route (max output) from `fromToken` to `toToken` for the
- * given input amount. Returns null if no viable path is found.
+ * Find the swap route from `fromToken` to `toToken`: the direct pair when it
+ * exists, else the shortest multi-hop route (max `maxTokens` path tokens, i.e.
+ * maxTokens - 2 intermediates). Returns null if no viable route is found.
  */
 export async function findBestRoute(
   amountIn: bigint,
@@ -38,101 +49,87 @@ export async function findBestRoute(
   if (A === B) return null;
   if (maxTokens < 2) maxTokens = 2;
 
-  const paths = candidatePaths(A, B, maxTokens);
-  if (paths.length === 0) return null;
+  const path = await findShortestPath(A, B, maxTokens);
+  if (!path) return null;
 
-  const results = await Promise.allSettled(
-    paths.map((p) => routerContract().getAmountsOut(amountIn, p) as unknown as bigint[]),
-  );
-
-  let best: RouteResult | null = null;
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status !== "fulfilled") continue;
-    const amounts = r.value;
-    if (!amounts || amounts.length === 0) continue;
+  try {
+    const amounts = (await routerContract().getAmountsOut(amountIn, path)) as unknown as bigint[];
+    if (!amounts || amounts.length === 0) return null;
     const out = BigInt(amounts[amounts.length - 1]);
-    if (out <= 0n) continue;
-    if (!best || out > best.out) best = { path: paths[i], out };
+    if (out <= 0n) return null;
+    return { path, out };
+  } catch {
+    // The route exists structurally but cannot be quoted (e.g. drained pool).
+    return null;
   }
-  return best;
 }
 
 /**
- * Build a deduped, ordered list of candidate paths to probe: the direct pair
- * first, then a brute-force 2-hop over every known intermediate (so routes via
- * any known token are tried even when the pair registry is cold), then longer
- * simple paths from the known-pair graph (3..maxTokens hops). Capped at
- * MAX_ROUTE_PROBES, with WQ and built-in tokens ordered first so the most
- * likely routes are always probed.
+ * Shortest path from A to B over the pair-existence graph: nodes are the two
+ * endpoints plus the ordered intermediate candidates; edges are pairs that
+ * exist (registry hit or factory.getPair). All existence checks run in
+ * parallel, then a BFS bounded to maxTokens - 1 edges picks the route.
  */
-function candidatePaths(A: string, B: string, maxTokens: number): string[][] {
-  const seen = new Set<string>();
-  const out: string[][] = [];
-  const push = (p: string[]): void => {
-    const key = p.join(">");
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push(p);
-  };
+async function findShortestPath(A: string, B: string, maxTokens: number): Promise<string[] | null> {
+  if (await pairExists(A, B)) return [A, B];
+  if (maxTokens < 3) return null;
 
-  const intermediates = orderedIntermediates(A, B);
-  const interSet = new Set(intermediates);
+  const nodes = [A, ...candidateIntermediates(A, B), B];
+  const target = nodes.length - 1;
+  if (target < 2) return null;
 
-  // 1-hop direct.
-  push([A, B]);
-
-  // 2-hop brute force over all known intermediates (no registry edge required).
-  for (const X of intermediates) {
-    if (out.length >= MAX_ROUTE_PROBES) break;
-    push([A, X, B]);
+  const adj: number[][] = nodes.map(() => []);
+  const checks: Promise<void>[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (i === 0 && j === target) continue; // direct pair already checked
+      checks.push(
+        pairExists(nodes[i], nodes[j]).then((exists) => {
+          if (exists) {
+            adj[i].push(j);
+            adj[j].push(i);
+          }
+        }),
+      );
+    }
   }
+  await Promise.all(checks);
 
-  // 3..maxTokens-hop simple paths over the known-pair graph. 2-hop overlaps are
-  // deduped away; the graph keeps longer routes bounded by known edges.
-  const adj = buildAdjacency();
-  const path: string[] = [A];
-  const visited = new Set<string>([A]);
-
-  const dfs = (current: string): void => {
-    if (out.length >= MAX_ROUTE_PROBES) return;
-    if (current === B) {
-      if (path.length >= 2) push([...path]);
-      return;
+  const maxEdges = maxTokens - 1;
+  const prev = new Array<number>(nodes.length).fill(-1);
+  const depth = new Array<number>(nodes.length).fill(-1);
+  depth[0] = 0;
+  const queue = [0];
+  while (queue.length) {
+    const cur = queue.shift() as number;
+    if (cur === target) break;
+    if (depth[cur] >= maxEdges) continue;
+    for (const next of adj[cur]) {
+      if (depth[next] !== -1) continue;
+      depth[next] = depth[cur] + 1;
+      prev[next] = cur;
+      queue.push(next);
     }
-    if (path.length >= maxTokens) return;
-    const neighbors = adj.get(current);
-    if (!neighbors) return;
-    for (const next of neighbors) {
-      if (visited.has(next)) continue;
-      // Only traverse through known intermediate tokens (or the destination).
-      if (next !== B && !interSet.has(next)) continue;
-      visited.add(next);
-      path.push(next);
-      dfs(next);
-      path.pop();
-      visited.delete(next);
-      if (out.length >= MAX_ROUTE_PROBES) return;
-    }
-  };
-  dfs(A);
+  }
+  if (depth[target] === -1 || depth[target] > maxEdges) return null;
 
-  return out.slice(0, MAX_ROUTE_PROBES);
+  const idxPath: number[] = [];
+  for (let cur = target; cur !== -1; cur = prev[cur]) idxPath.unshift(cur);
+  return idxPath.map((i) => nodes[i]);
 }
 
 /**
- * Ordered, deduped list of candidate intermediate addresses (lowercased),
- * excluding the endpoints A and B. WQ first, then built-ins, then user imports,
- * then any extra token addresses referenced by the pair registry. Including
- * registry constituents lets routes pass through tokens the user hasn't
- * imported but that appear in discovered/seed pairs.
+ * Ordered, deduped intermediate candidates (lowercased), excluding the
+ * endpoints: WQ first, then built-in/imported tokens, then registry pair
+ * constituents, capped at MAX_INTERMEDIATE_CANDIDATES so the getPair fan-out
+ * stays bounded.
  */
-function orderedIntermediates(A: string, B: string): string[] {
-  const seen = new Set<string>();
+function candidateIntermediates(A: string, B: string): string[] {
+  const seen = new Set<string>([A, B]);
   const out: string[] = [];
   const add = (addr: string): void => {
+    if (out.length >= MAX_INTERMEDIATE_CANDIDATES) return;
     const a = addr.toLowerCase();
-    if (a === A || a === B) return;
     if (seen.has(a)) return;
     seen.add(a);
     out.push(a);
@@ -146,24 +143,26 @@ function orderedIntermediates(A: string, B: string): string[] {
   return out;
 }
 
-/** Undirected adjacency map (lowercased addresses) from the pair registry. */
-function buildAdjacency(): Map<string, Set<string>> {
-  const adj = new Map<string, Set<string>>();
-  const link = (x: string, y: string): void => {
-    if (x === y) return;
-    let s = adj.get(x);
-    if (!s) {
-      s = new Set();
-      adj.set(x, s);
-    }
-    s.add(y);
-  };
-  for (const rec of getRegistry()) {
-    // Pair refs are real token addresses (WQ already substituted for native).
-    const x = rec.token0.address.toLowerCase();
-    const y = rec.token1.address.toLowerCase();
-    link(x, y);
-    link(y, x);
+/**
+ * Does a pair exist for two token addresses? Registry hits are authoritative
+ * and free; misses fall through to factory.getPair, whose result is cached
+ * briefly. RPC failures are treated as "no pair" but never cached.
+ */
+async function pairExists(a: string, b: string): Promise<boolean> {
+  if (a === b) return false;
+  if (findPairRecord(a, b)) return true;
+
+  const key = factoryAddress().toLowerCase() + "|" + [a, b].sort().join("|");
+  const cached = pairExistsCache.get(key);
+  if (cached && Date.now() - cached.at < PAIR_EXISTS_CACHE_TTL_MS) return cached.exists;
+
+  try {
+    const raw = await factory().getPair(a, b);
+    const addr = sanitizeAddressResponse(raw);
+    const exists = !!addr && addr.toLowerCase() !== ZERO_ADDRESS_32.toLowerCase();
+    pairExistsCache.set(key, { exists, at: Date.now() });
+    return exists;
+  } catch {
+    return false;
   }
-  return adj;
 }

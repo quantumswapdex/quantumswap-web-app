@@ -9,6 +9,7 @@ const HEI = "0xe8ea8beb86e714ef2bde0afac17d6e45d1c35e48f312d6dc12c4fdb90d9e8a3d"
 const Y2Q = "0xa8036870874fbed790ed4d3bbd41b2f390b9858ff021f2993e90c6d1cbb167c7";
 const T1 = "0x" + "1".repeat(64);
 const T2 = "0x" + "2".repeat(64);
+const FAKE_PAIR_ADDRESS = "0x" + "f".repeat(64);
 
 // Simulated on-chain pools, keyed by a sorted, lowercased token pair.
 const mocks = vi.hoisted(() => {
@@ -33,9 +34,13 @@ vi.mock("./contracts", () => ({
       return out;
     },
   }),
+  factory: () => ({
+    getPair: async (a: string, b: string): Promise<string> =>
+      mocks.pools.has(mocks.poolKey(a, b)) ? FAKE_PAIR_ADDRESS : "0x" + "0".repeat(64),
+  }),
 }));
 
-const { findBestRoute } = await import("./routeFinder");
+const { findBestRoute, clearRouteCache } = await import("./routeFinder");
 
 function setPools(pairs: [string, string][]): void {
   mocks.pools.clear();
@@ -60,6 +65,7 @@ describe("findBestRoute", () => {
     registryStore.set([]);
     tokenStore.set([]);
     mocks.pools.clear();
+    clearRouteCache();
     try {
       localStorage.clear();
     } catch {
@@ -99,10 +105,27 @@ describe("findBestRoute", () => {
     expect(route!.path).toEqual([HEI.toLowerCase(), Y2Q.toLowerCase()]);
   });
 
+  it("takes the direct pool even when the registry only knows a longer route", async () => {
+    // Registry is cold for HEI-Y2Q but the pool exists on-chain: the
+    // factory.getPair fallback must discover it and route direct.
+    setPools([
+      [HEI, Y2Q],
+      [HEI, wqAddress()],
+      [Y2Q, wqAddress()],
+    ]);
+    mergePair(pairRecord("0x" + "p".repeat(64), HEI, wqAddress()));
+    mergePair(pairRecord("0x" + "q".repeat(64), Y2Q, wqAddress()));
+
+    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), Y2Q.toLowerCase()]);
+  });
+
   it("routes 2-hop via a non-WQ intermediate even with a cold registry", async () => {
     importToken({ address: T1, name: "T1", symbol: "TK1", decimals: 18 });
     // Pools HEI-T1 and T1-Y2Q exist, but NO WQ pools and an EMPTY registry.
-    // The old WQ-only baseline would miss this; brute-force 2-hop finds it.
+    // Imported tokens are hop candidates, and factory.getPair (not the
+    // registry) provides the pair-existence edges.
     setPools([
       [HEI, T1],
       [T1, Y2Q],
@@ -145,6 +168,33 @@ describe("findBestRoute", () => {
     expect(route!.out).toBe(expected);
   });
 
+  it("picks the shortest route when both short and long routes exist", async () => {
+    importToken({ address: T1, name: "T1", symbol: "TK1", decimals: 18 });
+    importToken({ address: T2, name: "T2", symbol: "TK2", decimals: 18 });
+    // Both HEI -> WQ -> Y2Q (2 hops) and HEI -> T1 -> T2 -> Y2Q (3 hops) exist.
+    setPools([
+      [HEI, wqAddress()],
+      [wqAddress(), Y2Q],
+      [HEI, T1],
+      [T1, T2],
+      [T2, Y2Q],
+    ]);
+
+    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), wqAddress().toLowerCase(), Y2Q.toLowerCase()]);
+  });
+
+  it("returns null when the only structural route cannot be quoted", async () => {
+    // The registry claims a HEI-Y2Q pair, but the router cannot quote it
+    // (e.g. drained pool): findBestRoute must not return a broken route.
+    mergePair(pairRecord("0x" + "r".repeat(64), HEI, Y2Q));
+    setPools([]);
+
+    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).toBeNull();
+  });
+
   it("routes via the active release's WQ (custom release), not the original Beta 1 WQ", async () => {
     const WQ2 = "0x" + "9".repeat(64);
     const FAC2 = "0x" + "8".repeat(64);
@@ -168,5 +218,17 @@ describe("findBestRoute", () => {
     expect(route!.path).toEqual([HEI.toLowerCase(), WQ2.toLowerCase(), Y2Q.toLowerCase()]);
     // The original Beta 1 WQ must not appear in the path.
     expect(route!.path).not.toContain(WQ_ADDRESS.toLowerCase());
+  });
+
+  it("caches negative getPair results within the TTL", async () => {
+    setPools([]);
+    expect(await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5)).toBeNull();
+    // A pool appearing right after is not seen until the cache is cleared.
+    setPools([[HEI, Y2Q]]);
+    expect(await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5)).toBeNull();
+    clearRouteCache();
+    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), Y2Q.toLowerCase()]);
   });
 });

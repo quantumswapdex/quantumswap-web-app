@@ -6,7 +6,8 @@
  */
 
 import { txStore } from "../../lib/txStore";
-import { showToast, type ToastAccent } from "./toast";
+import { explorerTxUrl } from "../../config/chain";
+import { showToast, type ToastAccent, type ToastLink } from "./toast";
 
 export interface TxToastLabels {
   /** e.g. "Swapping" (shown while pending, with spinner) */
@@ -17,19 +18,22 @@ export interface TxToastLabels {
   failure: string;
 }
 
-const ACTIVITY_LINK = { href: "#/activity", label: "View activity" };
+const ACTIVITY_LINK: ToastLink = { href: "#/activity", label: "View activity" };
 
 /**
  * Show a colored pending toast for a just-submitted transaction and update it
  * in place when the transaction succeeds, fails, or times out.
  */
 export function trackTxToast(hash: string, accent: ToastAccent, labels: TxToastLabels, message?: string): void {
+  const txLink: ToastLink = { href: explorerTxUrl(hash), label: "View transaction" };
+  const links: ToastLink[] = [ACTIVITY_LINK, txLink];
+
   const toast = showToast({
     kind: "pending",
     accent,
     title: labels.pending,
     message,
-    link: ACTIVITY_LINK,
+    links,
   });
 
   let done = false;
@@ -39,16 +43,16 @@ export function trackTxToast(hash: string, accent: ToastAccent, labels: TxToastL
     done = true;
     unsub();
     if (record.status === "succeeded") {
-      toast.update({ kind: "success", title: labels.success, message, link: ACTIVITY_LINK });
+      toast.update({ kind: "success", title: labels.success, message, links });
     } else if (record.status === "failed") {
-      toast.update({ kind: "error", title: labels.failure, message, link: ACTIVITY_LINK });
+      toast.update({ kind: "error", title: labels.failure, message, links });
     } else {
       // timeout: confirmation not observed; the tx may still mine later.
       toast.update({
         kind: "info",
         title: `${labels.pending} - still unconfirmed`,
         message: "Confirmation timed out.",
-        link: ACTIVITY_LINK,
+        links,
         autoDismissMs: 10000,
       });
     }
