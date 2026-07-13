@@ -51,7 +51,6 @@ export default defineConfig({
     },
   },
   build: {
-    manifest: true,
     target: "es2022",
     // The quantumcoin SDK inlines its WASM (~2.7 MB) as base64; this large chunk
     // is expected and is exactly why the byte-accurate preloader exists.
