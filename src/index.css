@@ -132,6 +132,8 @@ button {
   width: 32px;
   height: 32px;
 }
+/* Wordmark: static brand gradient (white -> violet -> cyan), same as the
+   browser extension's header. */
 .wordmark {
   font-family: var(--headline);
   font-weight: 700;
@@ -139,9 +141,15 @@ button {
   letter-spacing: 0.2px;
   color: #fff;
   white-space: nowrap;
+  background-image: linear-gradient(100deg, #ffffff 0%, #ffffff 45%, #c084fc 70%, #00e5ff 100%);
+  background-size: 100% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .wordmark .accent {
-  color: rgb(192 132 252 / var(--tw-text-opacity, 1));
+  /* The gradient spans the whole wordmark now; keep the span colorless. */
+  color: inherit;
 }
 .beta {
   font-size: 10px;
@@ -849,18 +857,26 @@ main {
   margin-top: 3px;
 }
 .import-btn {
-  border: none;
   border-radius: 8px;
-  background: rgb(97, 45, 241);
+  /* Teal glass, matching .cta. */
+  --btn: 20, 184, 166;
+  background: rgba(var(--btn), 0.16);
+  border: 1px solid rgba(var(--btn), 0.65);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
   color: #fff;
   font-family: var(--body);
   font-size: 12px;
   font-weight: 600;
   padding: 7px 12px;
   cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.18s ease,
+    background 0.18s ease, filter 0.1s ease;
 }
 .import-btn:hover {
-  filter: brightness(1.1);
+  background: rgba(var(--btn), 0.26);
+  box-shadow:
+    0 0 22px -4px rgba(var(--btn), 0.85),
+    0 0 48px -10px rgba(var(--btn), 0.6);
 }
 
 .flip {
@@ -917,34 +933,37 @@ main {
   width: 100%;
   margin-top: 14px;
   height: 48px;
-  border: none;
   border-radius: 9px;
   font-family: var(--headline);
   font-weight: 600;
   font-size: 15.5px;
   color: #fff;
-  /* Measured: flat fill + 3D bevel edges (light top, subtle bottom) + tight drop glow. */
-  background: rgb(97, 45, 241);
-  box-shadow:
-    inset 0 2px 1px rgba(255, 230, 255, 0.34),
-    inset 0 -1px 0 rgba(255, 210, 230, 0.14),
-    0 3px 14px -2px rgba(90, 40, 210, 0.55);
+  /* Teal glass, same as the browser extension's primary action buttons:
+     tinted fill + teal border + soft glow at rest, halo lighting on hover,
+     pressed-in sink on :active. --btn holds the hue as raw RGB channels. */
+  --btn: 20, 184, 166;
+  background: rgba(var(--btn), 0.16);
+  border: 1px solid rgba(var(--btn), 0.65);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
+  transition: transform 0.1s ease, box-shadow 0.18s ease,
+    background 0.18s ease, filter 0.1s ease;
   cursor: pointer;
 }
 .cta:hover {
-  filter: brightness(1.06);
+  background: rgba(var(--btn), 0.26);
+  box-shadow:
+    0 0 22px -4px rgba(var(--btn), 0.85),
+    0 0 48px -10px rgba(var(--btn), 0.6);
 }
 .cta:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   filter: none;
+  background: rgba(var(--btn), 0.16);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
 }
 .cta:disabled:active {
   transform: none;
-  box-shadow:
-    inset 0 2px 1px rgba(255, 230, 255, 0.34),
-    inset 0 -1px 0 rgba(255, 210, 230, 0.14),
-    0 3px 14px -2px rgba(90, 40, 210, 0.55);
 }
 
 /* ---------- Modal dialogs ---------- */
@@ -1161,32 +1180,41 @@ main {
   width: 100%;
   margin-top: 14px;
   height: 44px;
-  border: none;
   border-radius: 9px;
   font-family: var(--headline);
   font-weight: 600;
   font-size: 14.5px;
   color: #fff;
-  background: rgb(97, 45, 241);
-  box-shadow:
-    inset 0 2px 1px rgba(255, 230, 255, 0.34),
-    inset 0 -1px 0 rgba(255, 210, 230, 0.14),
-    0 3px 14px -2px rgba(90, 40, 210, 0.55);
+  /* Teal glass, matching .cta. */
+  --btn: 20, 184, 166;
+  background: rgba(var(--btn), 0.16);
+  border: 1px solid rgba(var(--btn), 0.65);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
   cursor: pointer;
-  transition: filter 0.15s ease, transform 0.08s ease, opacity 0.15s ease;
+  transition: transform 0.1s ease, box-shadow 0.18s ease,
+    background 0.18s ease, filter 0.1s ease, opacity 0.15s ease;
 }
 .dlg-cta:hover {
-  filter: brightness(1.06);
+  background: rgba(var(--btn), 0.26);
+  box-shadow:
+    0 0 22px -4px rgba(var(--btn), 0.85),
+    0 0 48px -10px rgba(var(--btn), 0.6);
 }
 .dlg-cta:active {
-  transform: translateY(1px) scale(0.99);
-  filter: brightness(0.92);
+  transform: scale(0.97);
+  filter: brightness(1.15);
+  background: rgba(var(--btn), 0.42);
+  box-shadow:
+    0 0 10px -2px rgba(var(--btn), 0.9),
+    inset 0 2px 6px rgba(0, 0, 0, 0.55);
 }
 .dlg-cta:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   filter: none;
   transform: none;
+  background: rgba(var(--btn), 0.16);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
 }
 
 /* ---------- Multi-step transaction dialog ---------- */
@@ -1418,17 +1446,25 @@ main {
 .addr:active,
 .copy-btn:active,
 .pop-close:active,
-.import-btn:active,
 .burger-menu a:active {
   transform: scale(0.96);
   filter: brightness(0.88);
 }
-.cta:active {
-  transform: translateY(1px) scale(0.99);
-  filter: brightness(0.92);
+.import-btn:active {
+  transform: scale(0.96);
+  filter: brightness(1.15);
+  background: rgba(var(--btn), 0.42);
   box-shadow:
-    inset 0 2px 4px rgba(20, 5, 60, 0.5),
-    0 2px 8px -2px rgba(90, 40, 210, 0.4);
+    0 0 10px -2px rgba(var(--btn), 0.9),
+    inset 0 2px 6px rgba(0, 0, 0, 0.55);
+}
+.cta:active {
+  transform: scale(0.97);
+  filter: brightness(1.15);
+  background: rgba(var(--btn), 0.42);
+  box-shadow:
+    0 0 10px -2px rgba(var(--btn), 0.9),
+    inset 0 2px 6px rgba(0, 0, 0, 0.55);
 }
 
 .foot {
@@ -1526,15 +1562,18 @@ main {
     filter 0.15s ease, transform 0.08s ease;
 }
 .btn-primary {
-  background: rgb(97, 45, 241);
+  /* Teal glass, matching .cta and the browser extension's action buttons. */
+  --btn: 20, 184, 166;
+  background: rgba(var(--btn), 0.16);
+  border: 1px solid rgba(var(--btn), 0.65);
   color: #fff;
-  box-shadow:
-    inset 0 2px 1px rgba(255, 230, 255, 0.3),
-    inset 0 -1px 0 rgba(255, 210, 230, 0.12),
-    0 3px 12px -3px rgba(90, 40, 210, 0.5);
+  box-shadow: 0 0 14px -6px rgba(var(--btn), 0.55);
 }
 .btn-primary:hover {
-  filter: brightness(1.06);
+  background: rgba(var(--btn), 0.26);
+  box-shadow:
+    0 0 22px -4px rgba(var(--btn), 0.85),
+    0 0 48px -10px rgba(var(--btn), 0.6);
 }
 .btn-ghost {
   background: var(--glass);
@@ -1558,6 +1597,13 @@ main {
 .btn:active {
   transform: scale(0.97);
   filter: brightness(0.9);
+}
+.btn-primary:active {
+  filter: brightness(1.15);
+  background: rgba(var(--btn), 0.42);
+  box-shadow:
+    0 0 10px -2px rgba(var(--btn), 0.9),
+    inset 0 2px 6px rgba(0, 0, 0, 0.55);
 }
 .btn:disabled {
   opacity: 0.45;
