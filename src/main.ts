@@ -19,6 +19,7 @@ import { appRouter } from "./app/router";
 import { createAppShell } from "./ui/components/appShell";
 import { brandBackdrop, openInstallModal, openConnectModal } from "./ui/components/gateModals";
 import { initWallet, walletStore } from "./wallet/wallet";
+import { startWalletToasts } from "./wallet/walletToast";
 import { initPairRegistry } from "./lib/pairRegistry";
 import { initTxHistory } from "./lib/txStore";
 import { initTheme } from "./theme/theme";
@@ -90,6 +91,9 @@ async function bootstrap(): Promise<void> {
   initReleases();
 
   await initWallet();
+
+  // Toast on extension-driven connect / disconnect / account changes.
+  startWalletToasts();
 
   // Extension not detected: show a blocking install dialog over a branded backdrop.
   if (walletStore.get().status === "no-provider") {
