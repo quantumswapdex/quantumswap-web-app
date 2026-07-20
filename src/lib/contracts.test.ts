@@ -52,7 +52,7 @@ describe("contracts bind to the active release", () => {
   beforeAll(() => initSdkForTests());
   beforeEach(reset);
 
-  it("binds the Beta 1 addresses by default", () => {
+  it("binds the Beta 2 addresses by default", () => {
     factory();
     router();
     wq();
@@ -80,13 +80,13 @@ describe("contracts bind to the active release", () => {
     expect(bound.wq.at(-1)).not.toBe(WQ_ADDRESS);
   });
 
-  it("re-binds back to Beta 1 when the custom release is removed", () => {
+  it("re-binds back to Beta 2 when the custom release is removed", () => {
     const res = addCustomRelease("Prod 1", WQ2, FAC2, ROUT2);
     setDefault(res.id as string);
     factory();
     expect(bound.factory.at(-1)).toBe(sanitizeAddress(FAC2));
 
-    // removeCustom of the active custom falls back to beta-1 (see releases.test.ts).
+    // removeCustom of the active custom falls back to beta-2 (see releases.test.ts).
     releaseStore.update((prev) => ({
       releases: prev.releases.filter((r) => r.id !== res.id),
       defaultId: BUILTIN_RELEASES[0].id,

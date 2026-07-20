@@ -22,6 +22,7 @@ export interface TokenAmountInput {
   getBalance: () => bigint;
   refreshBalance: () => void;
   setReadonly: (readonly: boolean) => void;
+  setLabel: (label: string) => void;
 }
 
 export function createTokenAmountInput(opts: {
@@ -97,13 +98,14 @@ export function createTokenAmountInput(opts: {
     "MAX",
   );
 
+  const labelEl = el("span", { class: "label" }, opts.label);
   const root = el(
     "div",
     { class: "io-box" },
     el(
       "div",
       { class: "io-top" },
-      el("span", { class: "label" }, opts.label),
+      labelEl,
       el("span", { class: "bal" }, balanceEl, opts.showMax === false ? null : maxBtn),
     ),
     el("div", { class: "io-body" }, el("div", { class: "token-wrap" }, selectBtn), amountInput),
@@ -154,5 +156,8 @@ export function createTokenAmountInput(opts: {
     getBalance: () => balance,
     refreshBalance,
     setReadonly,
+    setLabel: (label) => {
+      labelEl.textContent = label;
+    },
   };
 }

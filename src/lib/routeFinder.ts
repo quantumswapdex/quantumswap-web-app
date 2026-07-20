@@ -26,6 +26,19 @@ export function clearRouteCache(): void {
   pairExistsCache.clear();
 }
 
+/**
+ * Thrown when a route exists structurally (the pools are there) but the router
+ * cannot quote the requested amount - e.g. a drained pool, or an exact-out
+ * amount at or above the pool's reserves. Distinct from "no route" (null) so
+ * the UI can say "not enough liquidity" instead of "no pool exists".
+ */
+export class InsufficientLiquidityError extends Error {
+  constructor() {
+    super("Not enough liquidity on this route for the requested amount.");
+    this.name = "InsufficientLiquidityError";
+  }
+}
+
 export interface RouteResult {
   /** WQ-substituted addresses; length 2..maxTokens. */
   path: string[];
@@ -33,10 +46,18 @@ export interface RouteResult {
   out: bigint;
 }
 
+export interface RouteResultExactOut {
+  /** WQ-substituted addresses; length 2..maxTokens. */
+  path: string[];
+  /** Required input amount from getAmountsIn over `path`. */
+  amountIn: bigint;
+}
+
 /**
  * Find the swap route from `fromToken` to `toToken`: the direct pair when it
  * exists, else the shortest multi-hop route (max `maxTokens` path tokens, i.e.
- * maxTokens - 2 intermediates). Returns null if no viable route is found.
+ * maxTokens - 2 intermediates). Returns null when no route exists at all;
+ * throws InsufficientLiquidityError when a route exists but cannot be quoted.
  */
 export async function findBestRoute(
   amountIn: bigint,
@@ -54,13 +75,44 @@ export async function findBestRoute(
 
   try {
     const amounts = (await routerContract().getAmountsOut(amountIn, path)) as unknown as bigint[];
-    if (!amounts || amounts.length === 0) return null;
-    const out = BigInt(amounts[amounts.length - 1]);
-    if (out <= 0n) return null;
+    const out = amounts && amounts.length > 0 ? BigInt(amounts[amounts.length - 1]) : 0n;
+    if (out <= 0n) throw new Error("zero output");
     return { path, out };
   } catch {
     // The route exists structurally but cannot be quoted (e.g. drained pool).
-    return null;
+    throw new InsufficientLiquidityError();
+  }
+}
+
+/**
+ * Exact-out counterpart of findBestRoute: find the same shortest route, then
+ * quote the required input for `amountOut` with getAmountsIn. Returns null
+ * when no route exists at all; throws InsufficientLiquidityError when a route
+ * exists but the output is at or above the pool's reserves (getAmountsIn
+ * reverts in that case).
+ */
+export async function findBestRouteExactOut(
+  amountOut: bigint,
+  fromToken: TokenInfo,
+  toToken: TokenInfo,
+  maxTokens = 5,
+): Promise<RouteResultExactOut | null> {
+  const A = toPathAddress(fromToken).toLowerCase();
+  const B = toPathAddress(toToken).toLowerCase();
+  if (A === B) return null;
+  if (maxTokens < 2) maxTokens = 2;
+
+  const path = await findShortestPath(A, B, maxTokens);
+  if (!path) return null;
+
+  try {
+    const amounts = (await routerContract().getAmountsIn(amountOut, path)) as unknown as bigint[];
+    const amountIn = amounts && amounts.length > 0 ? BigInt(amounts[0]) : 0n;
+    if (amountIn <= 0n) throw new Error("zero input");
+    return { path, amountIn };
+  } catch {
+    // Route exists but cannot be quoted (drained pool / amountOut >= reserves).
+    throw new InsufficientLiquidityError();
   }
 }
 

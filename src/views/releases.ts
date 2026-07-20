@@ -1,4 +1,4 @@
-/** Releases: switch the active on-chain deployment (built-in Beta 1 or a
+/** Releases: switch the active on-chain deployment (built-in Beta 2 or a
  * user-added custom release) and add new custom releases by contract address.
  * The active release is persisted and read at call time by the rest of the app,
  * so changing it here takes effect everywhere (see src/config/releases.ts). */

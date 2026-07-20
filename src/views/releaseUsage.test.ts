@@ -8,11 +8,11 @@ import path from "node:path";
  * the original `WQ_ADDRESS` / `FACTORY_ADDRESS` / `ROUTER_ADDRESS` constants
  * from `config/chain`. They must resolve the active release's addresses at call
  * time via `src/config/releases.ts`, otherwise switching releases would silently
- * keep using the original (Beta 1) deployment.
+ * keep using the original (Beta 2) deployment.
  *
  * This is a source-level audit (reads file text) so it catches a re-introduced
  * compile-time import even when the offending code path isn't exercised at test
- * time. Whitelisted: `config/releases.ts` (defines Beta 1 from the constants)
+ * time. Whitelisted: `config/releases.ts` (defines Beta 2 from the constants)
  * and `config/chain.ts` (defines the constants) — both legitimately reference them.
  */
 const HERE = path.dirname(fileURLToPath(import.meta.url));

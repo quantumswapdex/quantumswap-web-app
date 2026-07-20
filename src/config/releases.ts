@@ -1,6 +1,6 @@
 /**
  * Release switcher: the app talks to one on-chain deployment at a time, defined
- * by its three core contracts (WQ, Factory, Router). The built-in "Beta 1"
+ * by its three core contracts (WQ, Factory, Router). The built-in "Beta 2"
  * release mirrors the constants in `./chain.ts`; users can add custom releases
  * (e.g. a prod deployment or a test fixture) at runtime and choose which one is
  * active. The active release is persisted to localStorage and read at call time
@@ -33,17 +33,17 @@ export interface ReleaseState {
 }
 
 const STORAGE_KEY = "qs.releases.v1";
-const BETA_ID = "beta-1";
+const BETA_ID = "beta-2";
 
 /**
- * The single built-in release. Addresses are the Beta 1 deployment constants
+ * The single built-in release. Addresses are the Beta 2 deployment constants
  * from `./chain.ts`; adding more built-ins here is the only code change needed
  * to ship a new predefined release (e.g. a prod deployment).
  */
 export const BUILTIN_RELEASES: Release[] = [
   {
     id: BETA_ID,
-    name: "Beta 1",
+    name: "Beta 2",
     wq: WQ_ADDRESS,
     factory: FACTORY_ADDRESS,
     router: ROUTER_ADDRESS,
@@ -206,7 +206,7 @@ export function setDefault(id: string): void {
   applyRefreshSideEffects();
 }
 
-/** Remove a custom release. If it was active, fall back to Beta 1 + refresh. */
+/** Remove a custom release. If it was active, fall back to Beta 2 + refresh. */
 export function removeCustom(id: string): void {
   const state = releaseStore.get();
   const target = state.releases.find((r) => r.id === id);

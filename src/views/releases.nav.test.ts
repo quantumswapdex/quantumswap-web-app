@@ -20,7 +20,7 @@ describe("releases view across navigation", () => {
 
   it("a custom release still appears after unmounting and re-mounting the view", () => {
     const v1 = releasesView();
-    expect(v1.node.textContent).toContain("Beta 1");
+    expect(v1.node.textContent).toContain("Beta 2");
 
     const res = addCustomRelease("Prod 1", WQ2, FAC2, ROUT2);
     expect(res.ok).toBe(true);

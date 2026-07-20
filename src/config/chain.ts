@@ -15,13 +15,13 @@ export const BLOCK_EXPLORER = "https://quantumscan.com";
 /** Where to send users who do not have the QuantumSwap browser extension. */
 export const EXTENSION_INSTALL_URL = "https://quantumswap.com/extension.html";
 
-/** Core DEX contracts (from quantumswap-wallet-desktop/src/index.js:359-361). */
+/** Core DEX contracts (Beta 2 deployment). */
 export const WQ_ADDRESS =
-  "0x0E49c26cd1ca19bF8ddA2C8985B96783288458754757F4C9E00a5439A7291628";
+  "0x45BD01BE5EF8509D9dA183689eA7Faf647331c54c7C9801dE54c9EDE9Ac44D92";
 export const FACTORY_ADDRESS =
-  "0xbbF45a1B60044669793B444eD01Eb33e03Bb8cf3c5b6ae7887B218D05C5Cbf1d";
+  "0x95085766E20fCBf0106dC7037020Ca069e22080DBEF2615551Bab65D59a99754";
 export const ROUTER_ADDRESS =
-  "0x41323EF72662185f44a03ea0ad8094a0C9e925aB1102679D8e957e838054aac5";
+  "0xC3666584A70A707E5e929Ba9871083ED8f9528eCe7a56FdbA485272a645D861e";
 
 /** 32-byte zero address (pair-existence checks compare against this). */
 export const ZERO_ADDRESS_32 = "0x" + "0".repeat(64);

@@ -38,8 +38,8 @@ describe("releases store", () => {
   beforeAll(() => initSdkForTests());
   beforeEach(reset);
 
-  it("defaults to the Beta 1 built-in release", () => {
-    expect(currentRelease().id).toBe("beta-1");
+  it("defaults to the Beta 2 built-in release", () => {
+    expect(currentRelease().id).toBe("beta-2");
     expect(currentRelease().builtin).toBe(true);
     expect(wqAddress()).toBe(WQ_ADDRESS);
     expect(factoryAddress()).toBe(FACTORY_ADDRESS);
@@ -66,7 +66,7 @@ describe("releases store", () => {
     expect(customs[0].builtin).toBe(false);
     expect(customs[0].name).toBe("Prod 1");
     // Built-ins remain first and intact.
-    expect(releaseStore.get().releases[0].id).toBe("beta-1");
+    expect(releaseStore.get().releases[0].id).toBe("beta-2");
   });
 
   it("switches the active release via setDefault and reflects it in the accessors", () => {
@@ -78,7 +78,7 @@ describe("releases store", () => {
     expect(wqAddress()).toBe(sanitizeAddress(WQ2));
     expect(factoryAddress()).toBe(sanitizeAddress(FAC2));
     expect(routerAddress()).toBe(sanitizeAddress(ROUT2));
-    // Crucially, not the original Beta 1 constants.
+    // Crucially, not the original Beta 2 constants.
     expect(wqAddress()).not.toBe(WQ_ADDRESS);
     expect(factoryAddress()).not.toBe(FACTORY_ADDRESS);
     expect(routerAddress()).not.toBe(ROUTER_ADDRESS);
@@ -86,7 +86,7 @@ describe("releases store", () => {
 
   it("setDefault is a no-op for an unknown id", () => {
     setDefault("does-not-exist");
-    expect(currentRelease().id).toBe("beta-1");
+    expect(currentRelease().id).toBe("beta-2");
   });
 
   it("setDefault refreshes: clears discovered pairs and dispatches hashchange", () => {
@@ -115,7 +115,7 @@ describe("releases store", () => {
     window.removeEventListener("hashchange", onHash);
   });
 
-  it("removeCustom of the active custom release falls back to Beta 1 and refreshes", () => {
+  it("removeCustom of the active custom release falls back to Beta 2 and refreshes", () => {
     const res = addCustomRelease("Prod 1", WQ2, FAC2, ROUT2);
     setDefault(res.id as string);
     expect(isCustomActive()).toBe(true);
@@ -123,7 +123,7 @@ describe("releases store", () => {
     const onHash = vi.fn();
     window.addEventListener("hashchange", onHash);
     removeCustom(res.id as string);
-    expect(currentRelease().id).toBe("beta-1");
+    expect(currentRelease().id).toBe("beta-2");
     expect(isCustomActive()).toBe(false);
     expect(releaseStore.get().releases.find((r) => r.id === res.id)).toBeUndefined();
     expect(onHash).toHaveBeenCalled();
@@ -144,9 +144,9 @@ describe("releases store", () => {
   });
 
   it("removeCustom refuses to remove a built-in", () => {
-    removeCustom("beta-1");
-    expect(releaseStore.get().releases.find((r) => r.id === "beta-1")).toBeDefined();
-    expect(currentRelease().id).toBe("beta-1");
+    removeCustom("beta-2");
+    expect(releaseStore.get().releases.find((r) => r.id === "beta-2")).toBeDefined();
+    expect(currentRelease().id).toBe("beta-2");
   });
 
   it("persists customs + defaultId and reloads them via loadReleases", () => {
@@ -160,7 +160,7 @@ describe("releases store", () => {
     expect(reloadedCustom?.builtin).toBe(false);
     expect(reloadedCustom?.wq).toBe(sanitizeAddress(WQ2));
     // Built-ins always present.
-    expect(reloaded.releases.some((r) => r.id === "beta-1")).toBe(true);
+    expect(reloaded.releases.some((r) => r.id === "beta-2")).toBe(true);
   });
 
   it("a custom release survives a fresh load even without being made default", () => {
@@ -191,16 +191,16 @@ describe("releases store", () => {
     expect(releaseStore.get().defaultId).toBe(res.id);
   });
 
-  it("loadReleases falls back to Beta 1 when storage is empty or corrupt", () => {
+  it("loadReleases falls back to Beta 2 when storage is empty or corrupt", () => {
     try {
       localStorage.setItem("qs.releases.v1", "{not json");
     } catch {
       /* ignore */
     }
     const reloaded = loadReleases();
-    expect(reloaded.defaultId).toBe("beta-1");
+    expect(reloaded.defaultId).toBe("beta-2");
     expect(reloaded.releases).toHaveLength(1);
-    expect(reloaded.releases[0].id).toBe("beta-1");
+    expect(reloaded.releases[0].id).toBe("beta-2");
   });
 
   it("loadReleases drops persisted customs with invalid addresses", () => {
@@ -209,7 +209,7 @@ describe("releases store", () => {
         "qs.releases.v1",
         JSON.stringify({
           releases: [{ id: "custom-bad", name: "Bad", wq: "0xnope", factory: FAC2, router: ROUT2 }],
-          defaultId: "beta-1",
+          defaultId: "beta-2",
         }),
       );
     } catch {
@@ -225,16 +225,16 @@ describe("releases store", () => {
       localStorage.setItem(
         "qs.releases.v1",
         JSON.stringify({
-          releases: [{ id: "beta-1", name: "Imposter", wq: WQ2, factory: FAC2, router: ROUT2 }],
-          defaultId: "beta-1",
+          releases: [{ id: "beta-2", name: "Imposter", wq: WQ2, factory: FAC2, router: ROUT2 }],
+          defaultId: "beta-2",
         }),
       );
     } catch {
       /* ignore */
     }
     const reloaded = loadReleases();
-    const beta = reloaded.releases.find((r) => r.id === "beta-1");
-    expect(beta?.name).toBe("Beta 1");
+    const beta = reloaded.releases.find((r) => r.id === "beta-2");
+    expect(beta?.name).toBe("Beta 2");
     expect(beta?.wq).toBe(WQ_ADDRESS);
   });
 });

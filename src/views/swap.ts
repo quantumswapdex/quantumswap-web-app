@@ -1,6 +1,7 @@
 /**
- * Swap view: exact-in quotes via the router, price/impact/min-received, 0.30%
- * fee + route, pair-missing CTA, approve + swap, and native Q <-> WQ wrap/unwrap.
+ * Swap view: exact-in and exact-out quotes via the router (edit either side;
+ * the other is estimated), price/min-received or max-sold, 0.30% fee + route,
+ * pair-missing CTA, approve + swap, and native Q <-> WQ wrap/unwrap.
  */
 
 import { clear, el } from "../ui/dom";
@@ -28,11 +29,11 @@ import {
 } from "../lib/contracts";
 import { checkImport, findToken, importToken, toPathAddress } from "../tokens/tokenList";
 import { confirmImportToken } from "../tokens/addWarning";
-import { findBestRoute } from "../lib/routeFinder";
+import { findBestRoute, findBestRouteExactOut, InsufficientLiquidityError } from "../lib/routeFinder";
 import { getRegistry } from "../lib/pairRegistry";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
 import { formatAmount, formatPrice } from "../lib/format";
-import { deadlineFrom, minWithSlippage } from "../lib/quoteMath";
+import { deadlineFrom, maxWithSlippage, minWithSlippage } from "../lib/quoteMath";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { onTxSettled, recordTx } from "../lib/txStore";
@@ -49,6 +50,8 @@ export function swapView(ctx: RouteContext): ViewResult {
     toToken = fromToken.address === DEFAULT_PAIR_TOKEN_B.address ? DEFAULT_PAIR_TOKEN_A : DEFAULT_PAIR_TOKEN_B;
   }
   let quotedOut = 0n;
+  let quotedIn = 0n; // required input from the last successful exact-out quote
+  let lastEdited: "from" | "to" = "from"; // which side the user typed into (the other is estimated)
   let pairMissing = false;
   let routePath: string[] = []; // best multi-hop path from the last successful quote
   let quoteToken = 0; // increments to guard against out-of-order async quotes
@@ -62,7 +65,10 @@ export function swapView(ctx: RouteContext): ViewResult {
     label: "From",
     initialToken: fromToken,
     excludeAddress: () => toToken.address,
-    onAmountChange: () => refreshQuote(),
+    onAmountChange: () => {
+      lastEdited = "from";
+      refreshQuote();
+    },
     onTokenChange: (t) => {
       fromToken = t;
       refreshQuote();
@@ -75,13 +81,16 @@ export function swapView(ctx: RouteContext): ViewResult {
     initialToken: toToken,
     excludeAddress: () => fromToken.address,
     showMax: false,
+    onAmountChange: () => {
+      lastEdited = "to";
+      refreshQuote();
+    },
     onTokenChange: (t) => {
       toToken = t;
       refreshQuote();
       syncUrl();
     },
   });
-  toInput.setReadonly(true);
 
   const flipBtn = el(
     "button",
@@ -101,6 +110,7 @@ export function swapView(ctx: RouteContext): ViewResult {
           toToken = f ?? toToken;
           fromInput.setAmount(prevToAmount, true);
           toInput.setAmount("", true);
+          lastEdited = "from";
           refreshQuote();
           syncUrl();
         },
@@ -136,15 +146,25 @@ export function swapView(ctx: RouteContext): ViewResult {
   const isWrap = (): boolean => Boolean(fromToken.isNative) && toToken.address === wqAddress();
   const isUnwrap = (): boolean => fromToken.address === wqAddress() && Boolean(toToken.isNative);
 
-  async function refreshQuote(): Promise<void> {
+  function updateLabels(): void {
+    fromInput.setLabel(lastEdited === "to" ? "From (estimated)" : "From");
+    toInput.setLabel(lastEdited === "to" ? "To" : "To (estimated)");
+  }
+
+  function refreshQuote(): void {
     const token = ++quoteToken;
     clear(detailBox);
     pairMissing = false;
     quotedOut = 0n;
+    quotedIn = 0n;
     routePath = [];
+    updateLabels();
+    if (lastEdited === "to") void quoteExactOut(token);
+    else void quoteExactIn(token);
+  }
 
-    const decimals = fromToken.decimals;
-    const amountIn = parseAmount(fromInput.getAmount(), decimals);
+  async function quoteExactIn(token: number): Promise<void> {
+    const amountIn = parseAmount(fromInput.getAmount(), fromToken.decimals);
     if (amountIn === null || amountIn <= 0n) {
       toInput.setAmount("", true);
       renderAction();
@@ -169,7 +189,7 @@ export function swapView(ctx: RouteContext): ViewResult {
     try {
       const route = await findBestRoute(amountIn, fromToken, toToken, 5);
       if (token !== quoteToken) return;
-      if (!route || route.out <= 0n) throw new Error("No route found");
+      if (!route) throw new Error("No route found");
       routePath = route.path;
       const out = route.out;
       quotedOut = out;
@@ -186,25 +206,109 @@ export function swapView(ctx: RouteContext): ViewResult {
       detailBox.appendChild(statRow("Route", `${route.path.map((p) => tokenSymbol(p)).join(" \u203a ")} \u00b7 ${hops} hop${hops > 1 ? "s" : ""}`));
     } catch (err) {
       if (token !== quoteToken) return;
-      pairMissing = true;
       quotedOut = 0n;
       toInput.setAmount("", true);
-      clear(detailBox);
-      detailBox.appendChild(
-        el(
-          "div",
-          { class: "warn-box", style: { marginTop: "12px" } },
-          "No liquidity pool exists for this pair yet. ",
-          el(
-            "a",
-            { class: "link", href: `#/pools/add/${fromToken.address}/${toToken.address}` },
-            "Create it / add liquidity",
-          ),
-          el("p", { style: { marginTop: "4px", fontSize: "11.5px" } }, errText(err)),
-        ),
-      );
+      if (err instanceof InsufficientLiquidityError) {
+        renderLowLiquidity(err);
+      } else {
+        pairMissing = true;
+        renderNoRoute(err);
+      }
     }
     renderAction();
+  }
+
+  async function quoteExactOut(token: number): Promise<void> {
+    const amountOut = parseAmount(toInput.getAmount(), toToken.decimals);
+    if (amountOut === null || amountOut <= 0n) {
+      fromInput.setAmount("", true);
+      renderAction();
+      return;
+    }
+
+    // Native Q <-> WQ is a 1:1 wrap/unwrap; no router needed.
+    if (isWrap() || isUnwrap()) {
+      quotedOut = amountOut;
+      quotedIn = amountOut;
+      fromInput.setAmount(formatAmount(amountOut, fromToken.decimals, fromToken.decimals), true);
+      detailBox.appendChild(statRow("Rate", "1 : 1 (wrap/unwrap)"));
+      renderAction();
+      return;
+    }
+
+    if (walletStore.get().status !== "connected") {
+      detailBox.appendChild(el("p", { class: "cf-note" }, "Connect your wallet to fetch a live quote."));
+      renderAction();
+      return;
+    }
+
+    try {
+      const route = await findBestRouteExactOut(amountOut, fromToken, toToken, 5);
+      if (token !== quoteToken) return;
+      if (!route) throw new Error("No route found");
+      routePath = route.path;
+      quotedIn = route.amountIn;
+      quotedOut = amountOut;
+      fromInput.setAmount(formatAmount(route.amountIn, fromToken.decimals, fromToken.decimals), true);
+
+      const price = Number(formatAmount(amountOut, toToken.decimals, 18)) / Number(formatAmount(route.amountIn, fromToken.decimals, 18));
+      const slippage = settingsStore.get().slippagePercent;
+      const maxIn = maxWithSlippage(route.amountIn, slippage);
+      const hops = route.path.length - 1;
+      clear(detailBox);
+      detailBox.appendChild(statRow("Price", `1 ${fromToken.symbol} = ${formatPrice(price)} ${toToken.symbol}`));
+      detailBox.appendChild(statRow("Maximum sold", `${formatAmount(maxIn, fromToken.decimals, 6)} ${fromToken.symbol}`));
+      detailBox.appendChild(statRow(`LP fee (${(LP_FEE_BPS / 100).toFixed(2)}% / hop)`, `${formatAmount((route.amountIn * BigInt(LP_FEE_BPS)) / 10000n, fromToken.decimals, 6)} ${fromToken.symbol}`));
+      detailBox.appendChild(statRow("Route", `${route.path.map((p) => tokenSymbol(p)).join(" \u203a ")} \u00b7 ${hops} hop${hops > 1 ? "s" : ""}`));
+    } catch (err) {
+      if (token !== quoteToken) return;
+      quotedIn = 0n;
+      quotedOut = 0n;
+      fromInput.setAmount("", true);
+      if (err instanceof InsufficientLiquidityError) {
+        renderLowLiquidity(err);
+      } else {
+        pairMissing = true;
+        renderNoRoute(err);
+      }
+    }
+    renderAction();
+  }
+
+  function renderNoRoute(err: unknown): void {
+    clear(detailBox);
+    detailBox.appendChild(
+      el(
+        "div",
+        { class: "warn-box", style: { marginTop: "12px" } },
+        "No liquidity pool exists for this pair yet. ",
+        el(
+          "a",
+          { class: "link", href: `#/pools/add/${fromToken.address}/${toToken.address}` },
+          "Create it / add liquidity",
+        ),
+        el("p", { style: { marginTop: "4px", fontSize: "11.5px" } }, errText(err)),
+      ),
+    );
+  }
+
+  /** A pool exists but cannot cover the requested amount - do not suggest creating it. */
+  function renderLowLiquidity(err: unknown): void {
+    clear(detailBox);
+    detailBox.appendChild(
+      el(
+        "div",
+        { class: "warn-box", style: { marginTop: "12px" } },
+        "Not enough liquidity in this pool for the requested amount. Try a smaller amount, or ",
+        el(
+          "a",
+          { class: "link", href: `#/pools/add/${fromToken.address}/${toToken.address}` },
+          "add liquidity",
+        ),
+        ".",
+        el("p", { style: { marginTop: "4px", fontSize: "11.5px" } }, errText(err)),
+      ),
+    );
   }
 
   function renderAction(): void {
@@ -216,7 +320,7 @@ export function swapView(ctx: RouteContext): ViewResult {
       );
       return;
     }
-    const amountIn = parseAmount(fromInput.getAmount(), fromToken.decimals);
+    const amountIn = isExactOut() ? quotedIn : parseAmount(fromInput.getAmount(), fromToken.decimals);
     const label = isWrap() ? "Wrap" : isUnwrap() ? "Unwrap" : "Swap";
     const disabled = submitting || !amountIn || amountIn <= 0n || (pairMissing && !isWrap() && !isUnwrap()) || (!isWrap() && !isUnwrap() && quotedOut <= 0n);
     actionBox.appendChild(
@@ -232,10 +336,14 @@ export function swapView(ctx: RouteContext): ViewResult {
     );
   }
 
+  /** Exact-out applies to router swaps only; wrap/unwrap is always 1:1. */
+  const isExactOut = (): boolean => lastEdited === "to" && !isWrap() && !isUnwrap();
+
   function doSwap(): void {
     const account = walletStore.get().account;
     if (!account) return;
-    const amountIn = parseAmount(fromInput.getAmount(), fromToken.decimals);
+    // For exact-out use the precise quoted input; the From field only shows it.
+    const amountIn = isExactOut() ? quotedIn : parseAmount(fromInput.getAmount(), fromToken.decimals);
     if (!amountIn || amountIn <= 0n) return;
 
     submitting = true;
@@ -284,6 +392,7 @@ export function swapView(ctx: RouteContext): ViewResult {
       ];
     }
 
+    const exactOut = isExactOut();
     const steps: TxStep[] = [];
     if (!fromToken.isNative) {
       const ap = await approvalStep({
@@ -291,7 +400,8 @@ export function swapView(ctx: RouteContext): ViewResult {
         symbol: fromToken.symbol,
         abi: ERC20_ABI,
         owner: account,
-        amount: amountIn,
+        // Exact-out lets the router pull up to amountInMax, so approve that.
+        amount: exactOut ? maxWithSlippage(amountIn, settingsStore.get().slippagePercent) : amountIn,
       });
       if (ap) steps.push(ap);
     }
@@ -299,19 +409,29 @@ export function swapView(ctx: RouteContext): ViewResult {
       label: "Swap",
       run: async (onAccepted) => {
         const slippage = settingsStore.get().slippagePercent;
-        const minOut = minWithSlippage(quotedOut, slippage);
         const path = routePath.length >= 2 ? [...routePath] : [toPathAddress(fromToken), toPathAddress(toToken)];
         const ts = await getLatestBlockTimestamp();
         const deadline = deadlineFrom(ts);
         let data: string;
         let value = 0n;
-        if (fromToken.isNative) {
-          data = encodeRouter("swapExactETHForTokens", [minOut, path, account, deadline]);
+        if (exactOut) {
+          const amountOut = quotedOut;
+          const maxIn = maxWithSlippage(amountIn, slippage);
+          if (fromToken.isNative) {
+            data = encodeRouter("swapETHForExactTokens", [amountOut, path, account, deadline]);
+            value = maxIn;
+          } else if (toToken.isNative) {
+            data = encodeRouter("swapTokensForExactETH", [amountOut, maxIn, path, account, deadline]);
+          } else {
+            data = encodeRouter("swapTokensForExactTokens", [amountOut, maxIn, path, account, deadline]);
+          }
+        } else if (fromToken.isNative) {
+          data = encodeRouter("swapExactETHForTokens", [minWithSlippage(quotedOut, slippage), path, account, deadline]);
           value = amountIn;
         } else if (toToken.isNative) {
-          data = encodeRouter("swapExactTokensForETH", [amountIn, minOut, path, account, deadline]);
+          data = encodeRouter("swapExactTokensForETH", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         } else {
-          data = encodeRouter("swapExactTokensForTokens", [amountIn, minOut, path, account, deadline]);
+          data = encodeRouter("swapExactTokensForTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         }
         const amount = fromInput.getAmount();
         const outAmount = toInput.getAmount();

@@ -33,6 +33,19 @@ vi.mock("./contracts", () => ({
       }
       return out;
     },
+    getAmountsIn: async (amountOut: bigint, path: string[]): Promise<bigint[]> => {
+      let amount = amountOut;
+      const amounts: bigint[] = [amount];
+      for (let i = path.length - 1; i > 0; i--) {
+        if (!mocks.pools.has(mocks.poolKey(path[i - 1], path[i]))) {
+          throw new Error("INSUFFICIENT_LIQUIDITY");
+        }
+        // Inverse of the 0.30% fee per hop, rounding up like the router.
+        amount = (amount * 1000n) / 997n + 1n;
+        amounts.unshift(amount);
+      }
+      return amounts;
+    },
   }),
   factory: () => ({
     getPair: async (a: string, b: string): Promise<string> =>
@@ -40,7 +53,7 @@ vi.mock("./contracts", () => ({
   }),
 }));
 
-const { findBestRoute, clearRouteCache } = await import("./routeFinder");
+const { findBestRoute, findBestRouteExactOut, clearRouteCache, InsufficientLiquidityError } = await import("./routeFinder");
 
 function setPools(pairs: [string, string][]): void {
   mocks.pools.clear();
@@ -185,17 +198,17 @@ describe("findBestRoute", () => {
     expect(route!.path).toEqual([HEI.toLowerCase(), wqAddress().toLowerCase(), Y2Q.toLowerCase()]);
   });
 
-  it("returns null when the only structural route cannot be quoted", async () => {
+  it("throws InsufficientLiquidityError when the only structural route cannot be quoted", async () => {
     // The registry claims a HEI-Y2Q pair, but the router cannot quote it
-    // (e.g. drained pool): findBestRoute must not return a broken route.
+    // (e.g. drained pool): findBestRoute must not return a broken route, and
+    // must signal "not enough liquidity" rather than "no route".
     mergePair(pairRecord("0x" + "r".repeat(64), HEI, Y2Q));
     setPools([]);
 
-    const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
-    expect(route).toBeNull();
+    await expect(findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5)).rejects.toBeInstanceOf(InsufficientLiquidityError);
   });
 
-  it("routes via the active release's WQ (custom release), not the original Beta 1 WQ", async () => {
+  it("routes via the active release's WQ (custom release), not the original Beta 2 WQ", async () => {
     const WQ2 = "0x" + "9".repeat(64);
     const FAC2 = "0x" + "8".repeat(64);
     const ROUT2 = "0x" + "7".repeat(64);
@@ -203,7 +216,7 @@ describe("findBestRoute", () => {
     expect(res.ok).toBe(true);
     setDefault(res.id as string);
 
-    // The active hub is now the custom WQ, not the Beta 1 WQ_ADDRESS.
+    // The active hub is now the custom WQ, not the Beta 2 WQ_ADDRESS.
     expect(wqAddress().toLowerCase()).toBe(WQ2.toLowerCase());
 
     setPools([
@@ -216,8 +229,47 @@ describe("findBestRoute", () => {
     const route = await findBestRoute(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
     expect(route).not.toBeNull();
     expect(route!.path).toEqual([HEI.toLowerCase(), WQ2.toLowerCase(), Y2Q.toLowerCase()]);
-    // The original Beta 1 WQ must not appear in the path.
+    // The original Beta 2 WQ must not appear in the path.
     expect(route!.path).not.toContain(WQ_ADDRESS.toLowerCase());
+  });
+
+  it("exact-out: quotes the required input over the direct route", async () => {
+    setPools([[HEI, Y2Q]]);
+    mergePair(pairRecord("0x" + "r".repeat(64), HEI, Y2Q));
+
+    const route = await findBestRouteExactOut(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), Y2Q.toLowerCase()]);
+    // Inverse of one 0.30% fee hop, rounded up.
+    expect(route!.amountIn).toBe((1_000_000n * 1000n) / 997n + 1n);
+  });
+
+  it("exact-out: routes 2-hop via WQ when no direct pool exists", async () => {
+    setPools([
+      [HEI, wqAddress()],
+      [Y2Q, wqAddress()],
+    ]);
+    mergePair(pairRecord("0x" + "p".repeat(64), HEI, wqAddress()));
+    mergePair(pairRecord("0x" + "q".repeat(64), Y2Q, wqAddress()));
+
+    const route = await findBestRouteExactOut(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5);
+    expect(route).not.toBeNull();
+    expect(route!.path).toEqual([HEI.toLowerCase(), wqAddress().toLowerCase(), Y2Q.toLowerCase()]);
+    // Two inverse fee hops, each rounded up (applied back-to-front).
+    const afterHop2 = (1_000_000n * 1000n) / 997n + 1n;
+    expect(route!.amountIn).toBe((afterHop2 * 1000n) / 997n + 1n);
+  });
+
+  it("exact-out: returns null when no route exists", async () => {
+    setPools([]);
+    expect(await findBestRouteExactOut(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5)).toBeNull();
+  });
+
+  it("exact-out: throws InsufficientLiquidityError when the structural route cannot be quoted", async () => {
+    // Registry claims a pair but the router reverts (drained / output >= reserves).
+    mergePair(pairRecord("0x" + "r".repeat(64), HEI, Y2Q));
+    setPools([]);
+    await expect(findBestRouteExactOut(1_000_000n, HEI_TOKEN, Y2Q_TOKEN, 5)).rejects.toBeInstanceOf(InsufficientLiquidityError);
   });
 
   it("caches negative getPair results within the TTL", async () => {
