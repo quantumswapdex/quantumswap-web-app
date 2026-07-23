@@ -18,6 +18,10 @@ const ROUTER_ADDRESS = "0x41323EF72662185f44a03ea0ad8094a0C9e925aB1102679D8e957e
 const WQ_ADDRESS = "0x0E49c26cd1ca19bF8ddA2C8985B96783288458754757F4C9E00a5439A7291628";
 const HEI = "0xe8ea8beb86e714ef2bde0afac17d6e45d1c35e48f312d6dc12c4fdb90d9e8a3d";
 const Y2Q = "0xa8036870874fbed790ed4d3bbd41b2f390b9858ff021f2993e90c6d1cbb167c7";
+const LIO = "0x4015b40b181f2415003f24118b215ce04f276509176eccb10e0c4a9ccbd458d2";
+const TIG = "0x6ff70c260458c9f448ec7aab008f1611456d58edb12e7795bf88735e1986a6ad";
+const CAT = "0x592a8abb1de07bc3797bc3c592fc74c099c5a311ba856fc66fb6d4cfc18c728d";
+const PANT = "0x05fe2265b69d0c70a24075180242736c7389876b8917f38400e6540519e663df";
 
 const A = (process.argv[2] ?? "").toLowerCase();
 const B = (process.argv[3] ?? "").toLowerCase();
@@ -62,7 +66,7 @@ function short(addr) {
 // Candidate intermediates: WQ first, then built-ins, then extras. Dedup, drop A/B.
 const intermediates = [];
 const seen = new Set();
-for (const addr of [WQ_ADDRESS, HEI, Y2Q, ...EXTRA_INTER]) {
+for (const addr of [WQ_ADDRESS, HEI, Y2Q, LIO, TIG, CAT, PANT, ...EXTRA_INTER]) {
   const a = addr.toLowerCase();
   if (a === A || a === B || seen.has(a)) continue;
   seen.add(a);

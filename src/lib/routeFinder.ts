@@ -14,8 +14,13 @@ import { findPairRecord, getRegistry } from "./pairRegistry";
 import { factory, router as routerContract } from "./contracts";
 import { sanitizeAddressResponse } from "./sanitizeResponse";
 
-/** Cap on intermediate hop candidates per route search (bounds getPair fan-out). */
-const MAX_INTERMEDIATE_CANDIDATES = 6;
+/**
+ * Cap on intermediate hop candidates per route search (bounds getPair fan-out).
+ * Must comfortably exceed the built-in approved token count (WQ + 6 approved)
+ * so every recognized token is always a hop candidate, with room left for
+ * imported tokens and registry pair constituents.
+ */
+const MAX_INTERMEDIATE_CANDIDATES = 10;
 
 /** Pair-existence results are cached briefly; pools rarely appear or disappear. */
 const PAIR_EXISTS_CACHE_TTL_MS = 60_000;

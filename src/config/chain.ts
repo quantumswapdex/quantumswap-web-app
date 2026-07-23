@@ -13,7 +13,8 @@ export const NETWORK_NAME = "MAINNET";
 export const BLOCK_EXPLORER = "https://quantumscan.com";
 
 /** Where to send users who do not have the QuantumSwap browser extension. */
-export const EXTENSION_INSTALL_URL = "https://quantumswap.com/extension.html";
+export const EXTENSION_INSTALL_URL =
+  "https://chromewebstore.google.com/detail/quantumswap-browser-exten/blpcmbhbgnmhfgfbejmgokfofobodghk";
 
 /** Core DEX contracts (Beta 2 deployment). */
 export const WQ_ADDRESS =
@@ -103,7 +104,46 @@ export const Y2Q_TOKEN: TokenInfo = {
   approved: true,
 };
 
-export const APPROVED_TOKENS: TokenInfo[] = [HEISEN_TOKEN, Y2Q_TOKEN];
+export const LION_TOKEN: TokenInfo = {
+  address: "0x4015b40b181f2415003f24118b215ce04f276509176eccb10e0c4a9ccbd458d2",
+  symbol: "Lio",
+  name: "Lion",
+  decimals: 18,
+  approved: true,
+};
+
+export const TIGER_TOKEN: TokenInfo = {
+  address: "0x6ff70c260458c9f448ec7aab008f1611456d58edb12e7795bf88735e1986a6ad",
+  symbol: "tig",
+  name: "Tiger",
+  decimals: 18,
+  approved: true,
+};
+
+export const CAT_TOKEN: TokenInfo = {
+  address: "0x592a8abb1de07bc3797bc3c592fc74c099c5a311ba856fc66fb6d4cfc18c728d",
+  symbol: "cat",
+  name: "Cat",
+  decimals: 18,
+  approved: true,
+};
+
+export const PANTHER_TOKEN: TokenInfo = {
+  address: "0x05fe2265b69d0c70a24075180242736c7389876b8917f38400e6540519e663df",
+  symbol: "pant",
+  name: "panther",
+  decimals: 18,
+  approved: true,
+};
+
+export const APPROVED_TOKENS: TokenInfo[] = [
+  HEISEN_TOKEN,
+  Y2Q_TOKEN,
+  LION_TOKEN,
+  TIGER_TOKEN,
+  CAT_TOKEN,
+  PANTHER_TOKEN,
+];
 
 /**
  * Default token pair preselected by the swap / create-pair / add-liquidity

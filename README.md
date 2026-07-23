@@ -85,7 +85,8 @@ an honest progress bar on first load.
 - **Node.js `>= 20`** and npm.
 - The **QuantumSwap browser extension** installed and unlocked. The app detects the
   extension's provider (`window.quantumcoin`); without it you will see an install
-  prompt. Get it at <https://quantumswap.com/extension.html>.
+  prompt. Get it from the
+  [Chrome Web Store](https://chromewebstore.google.com/detail/quantumswap-browser-exten/blpcmbhbgnmhfgfbejmgokfofobodghk).
 
 ## Getting Started
 
@@ -178,7 +179,8 @@ Network, contract addresses, default tokens, and the extension install URL live 
   **Settings → Contracts**.
 - **Default tokens:** the built-in list; other tokens require a manual,
   warned import.
-- **Extension install URL:** <https://quantumswap.com/extension.html>.
+- **Extension install URL:**
+  <https://chromewebstore.google.com/detail/quantumswap-browser-exten/blpcmbhbgnmhfgfbejmgokfofobodghk>.
 
 > **Note on addresses:** QuantumCoin addresses are **32 bytes** (`0x` + 64 hex
 > characters). All validation and pair-existence checks use the 32-byte format via
@@ -222,7 +224,8 @@ folder as a build artifact (`quantumswap-web-app-<sha>`).
 ## Links
 
 - QuantumSwap: <https://quantumswap.com>
-- QuantumSwap browser extension: <https://quantumswap.com/extension.html>
+- QuantumSwap browser extension:
+  <https://chromewebstore.google.com/detail/quantumswap-browser-exten/blpcmbhbgnmhfgfbejmgokfofobodghk>
 - QuantumCoin: <https://quantumcoin.org>
 
 ## Disclaimer
