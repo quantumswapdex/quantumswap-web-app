@@ -25,6 +25,8 @@ import { openGlobalSearch, searchPreview, type SearchPreviewItem } from "../../s
 import { showToast } from "./toast";
 
 const DOWNLOAD_WALLET_URL = "https://quantumswap.com/downloads.html";
+const DOWNLOAD_BROWSER_EXTENSION_URL =
+  "https://chromewebstore.google.com/detail/quantumswap-browser-exten/blpcmbhbgnmhfgfbejmgokfofobodghk";
 
 interface NavItem {
   label: string;
@@ -329,6 +331,11 @@ export function createAppShell(): { root: HTMLElement; outlet: HTMLElement } {
     releasesLink,
     el("div", { class: "sep" }),
     el("a", { href: DOWNLOAD_WALLET_URL, target: "_blank", rel: "noopener noreferrer" }, "Download Wallet"),
+    el(
+      "a",
+      { href: DOWNLOAD_BROWSER_EXTENSION_URL, target: "_blank", rel: "noopener noreferrer" },
+      "Browser Extension",
+    ),
     settingsLink,
   );
   burgerMenu.addEventListener("click", (e) => {
