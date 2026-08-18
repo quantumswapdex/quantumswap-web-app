@@ -20,8 +20,9 @@ import { createAppShell } from "./ui/components/appShell";
 import { brandBackdrop, openInstallModal, openConnectModal } from "./ui/components/gateModals";
 import { initWallet, walletStore } from "./wallet/wallet";
 import { startWalletToasts } from "./wallet/walletToast";
-import { initPairRegistry } from "./lib/pairRegistry";
+import { initPairRegistry, syncRegistryTokenRefs } from "./lib/pairRegistry";
 import { initTxHistory } from "./lib/txStore";
+import { refreshApprovedTokenMetadata } from "./tokens/tokenList";
 import { initTheme } from "./theme/theme";
 
 import { swapView } from "./views/swap";
@@ -105,6 +106,10 @@ async function bootstrap(): Promise<void> {
 
   initPairRegistry();
   initTxHistory();
+
+  // Non-blocking: override hardcoded approved-token metadata with the on-chain
+  // name/symbol/decimals, then bring registry snapshots in line.
+  void refreshApprovedTokenMetadata().then(() => syncRegistryTokenRefs());
 
   const { root: shell, outlet } = createAppShell();
   root.replaceChildren(shell);

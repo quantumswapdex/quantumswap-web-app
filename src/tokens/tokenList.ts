@@ -120,6 +120,46 @@ export async function readTokenMetadata(address: string): Promise<TokenMetadata>
   };
 }
 
+/**
+ * Re-read on-chain metadata for the approved built-in tokens; the on-chain
+ * name/symbol/decimals override the hardcoded fallbacks in config/chain.ts.
+ * Mutates the shared TokenInfo objects in place so every holder of a reference
+ * (selectors, DEFAULT_PAIR_TOKEN_A/B, registry lookups) sees the on-chain
+ * values, then bumps tokenStore so mounted views re-render. A field whose read
+ * fails (offline, reverting contract) keeps its hardcoded fallback.
+ */
+export async function refreshApprovedTokenMetadata(): Promise<void> {
+  let changed = false;
+  await Promise.all(
+    APPROVED_TOKENS.map(async (t) => {
+      const token = erc20(t.address);
+      const [nameRaw, symbolRaw, decimalsRaw] = await Promise.all([
+        token.name().catch(() => null),
+        token.symbol().catch(() => null),
+        token.decimals().catch(() => null),
+      ]);
+      const name = sanitizeName(nameRaw);
+      const symbol = sanitizeSymbol(symbolRaw);
+      if (name && name !== t.name) {
+        t.name = name;
+        changed = true;
+      }
+      if (symbol && symbol !== t.symbol) {
+        t.symbol = symbol;
+        changed = true;
+      }
+      if (decimalsRaw !== null) {
+        const decimals = sanitizeDecimals(decimalsRaw, t.decimals);
+        if (decimals !== t.decimals) {
+          t.decimals = decimals;
+          changed = true;
+        }
+      }
+    }),
+  );
+  if (changed) tokenStore.update((list) => [...list]);
+}
+
 /** Read a token balance (base units) for an account. Native uses provider balance. */
 export async function readTokenBalance(token: TokenInfo, account: string): Promise<bigint> {
   const owner = sanitizeAddress(account);

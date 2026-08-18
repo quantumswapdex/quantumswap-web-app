@@ -60,6 +60,37 @@ export function initPairRegistry(): void {
   registryStore.set([...byKey.values()]);
 }
 
+/**
+ * Re-sync registry token refs (symbol/decimals) with the current known-token
+ * list. Persisted/discovered records snapshot metadata at discovery time, so
+ * after refreshApprovedTokenMetadata() updates a built-in token this brings any
+ * stale snapshots (e.g. a pre-rename symbol in localStorage) in line.
+ */
+export function syncRegistryTokenRefs(): void {
+  registryStore.update((list) => {
+    let changed = false;
+    const next = list.map((rec) => {
+      const token0 = refreshedRef(rec.token0);
+      const token1 = refreshedRef(rec.token1);
+      if (token0 === rec.token0 && token1 === rec.token1) return rec;
+      changed = true;
+      return { ...rec, token0, token1 };
+    });
+    if (!changed) return list;
+    persistDiscovered(next);
+    return next;
+  });
+}
+
+function refreshedRef(ref: PairTokenRef): PairTokenRef {
+  const known = getAllTokens().find(
+    (t) => !t.isNative && t.address.toLowerCase() === ref.address.toLowerCase(),
+  );
+  if (!known) return ref;
+  if (known.symbol === ref.symbol && known.decimals === ref.decimals) return ref;
+  return { address: ref.address, symbol: known.symbol, decimals: known.decimals };
+}
+
 /** Merge a pair record into the registry (dedupe by canonical token key). */
 export function mergePair(record: PairRecord): void {
   registryStore.update((list) => {
