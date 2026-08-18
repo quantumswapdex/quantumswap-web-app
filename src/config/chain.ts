@@ -85,12 +85,14 @@ export const WQ_TOKEN: TokenInfo = {
 };
 
 /**
- * Approved token whitelist (from quantumswap-wallet-desktop/src/js/tokenfilter.js).
- * Decimals default to 18 but are re-read on-chain when the token is loaded.
+ * Approved token whitelist (addresses from quantumswap-wallet-desktop/src/js/
+ * tokenfilter.js). Name/symbol/decimals here are offline fallbacks only:
+ * refreshApprovedTokenMetadata() (tokens/tokenList.ts) re-reads them on-chain
+ * at startup and the on-chain values win.
  */
 export const HEISEN_TOKEN: TokenInfo = {
   address: "0xe8ea8beb86e714ef2bde0afac17d6e45d1c35e48f312d6dc12c4fdb90d9e8a3d",
-  symbol: "hei",
+  symbol: "HSN",
   name: "Heisen",
   decimals: 18,
   approved: true,
