@@ -61,6 +61,11 @@ export interface TokenInfo {
   isNative?: boolean;
   /** Approved tokens are trusted and bypass the stablecoin-name filter. */
   approved?: boolean;
+  /**
+   * The token burns or taxes on transfer. The router has no fee-safe
+   * exact-output form, so the swap view keeps such pairs exact-in.
+   */
+  feeOnTransfer?: boolean;
 }
 
 /**
@@ -96,6 +101,7 @@ export const HEISEN_TOKEN: TokenInfo = {
   name: "Heisen",
   decimals: 18,
   approved: true,
+  feeOnTransfer: true,
 };
 
 export const Y2Q_TOKEN: TokenInfo = {
@@ -104,6 +110,7 @@ export const Y2Q_TOKEN: TokenInfo = {
   name: "Y2Q",
   decimals: 18,
   approved: true,
+  feeOnTransfer: true,
 };
 
 export const LION_TOKEN: TokenInfo = {

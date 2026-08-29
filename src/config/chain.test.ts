@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { impersonatesStablecoin, isRecognizedAddress, WQ_ADDRESS } from "./chain";
+import { HEISEN_TOKEN, impersonatesStablecoin, isRecognizedAddress, LION_TOKEN, NATIVE_TOKEN, WQ_ADDRESS, WQ_TOKEN, Y2Q_TOKEN } from "./chain";
 
 describe("impersonatesStablecoin", () => {
   it("flags common stablecoin/fiat names and symbols", () => {
@@ -31,5 +31,18 @@ describe("isRecognizedAddress", () => {
 
   it("rejects unknown addresses", () => {
     expect(isRecognizedAddress("0x" + "1".repeat(64))).toBe(false);
+  });
+});
+
+describe("fee-on-transfer flags", () => {
+  it("flags the tokens that burn or tax on transfer", () => {
+    expect(HEISEN_TOKEN.feeOnTransfer).toBe(true);
+    expect(Y2Q_TOKEN.feeOnTransfer).toBe(true);
+  });
+
+  it("leaves other registry tokens unflagged", () => {
+    expect(LION_TOKEN.feeOnTransfer).toBeFalsy();
+    expect(WQ_TOKEN.feeOnTransfer).toBeFalsy();
+    expect(NATIVE_TOKEN.feeOnTransfer).toBeFalsy();
   });
 });

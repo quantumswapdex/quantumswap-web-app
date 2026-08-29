@@ -34,7 +34,7 @@ import { getRegistry } from "../lib/pairRegistry";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
 import { formatAmount, formatPrice } from "../lib/format";
 import { deadlineFrom, maxWithSlippage, minWithSlippage } from "../lib/quoteMath";
-import { getLatestBlockTimestamp } from "../lib/extensionProvider";
+import { extensionProvider, getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
@@ -131,6 +131,14 @@ export function swapView(ctx: RouteContext): ViewResult {
     gearIcon(18),
   );
 
+  // Shown under the To field while a fee-on-transfer token is selected.
+  const feeNote = el(
+    "p",
+    { class: "cf-note" },
+    "Exact output is not available for tokens that burn or tax on transfer. Enter the quantity to swap in the From field.",
+  );
+  feeNote.hidden = true;
+
   // Swap-only landing: the card carries its own title, no page header above it.
   const node = el(
     "section",
@@ -139,6 +147,7 @@ export function swapView(ctx: RouteContext): ViewResult {
     fromInput.root,
     el("div", { class: "flip" }, flipBtn),
     toInput.root,
+    feeNote,
     detailBox,
     actionBox,
   );
@@ -147,11 +156,17 @@ export function swapView(ctx: RouteContext): ViewResult {
   const isUnwrap = (): boolean => fromToken.address === wqAddress() && Boolean(toToken.isNative);
 
   function updateLabels(): void {
+    const locked = feeOnTransferPair();
     fromInput.setLabel(lastEdited === "to" ? "From (estimated)" : "From");
     toInput.setLabel(lastEdited === "to" ? "To" : "To (estimated)");
+    // A fee-on-transfer side has no exact-output form: the To field only
+    // shows the estimate and the note says why.
+    toInput.setReadonly(locked);
+    feeNote.hidden = !locked;
   }
 
   function refreshQuote(): void {
+    if (lastEdited === "to" && feeOnTransferPair()) lastEdited = "from";
     const token = ++quoteToken;
     clear(detailBox);
     pairMissing = false;
@@ -336,8 +351,11 @@ export function swapView(ctx: RouteContext): ViewResult {
     );
   }
 
-  /** Exact-out applies to router swaps only; wrap/unwrap is always 1:1. */
-  const isExactOut = (): boolean => lastEdited === "to" && !isWrap() && !isUnwrap();
+  /** Either side burns or taxes on transfer: no fee-safe exact-output form exists. */
+  const feeOnTransferPair = (): boolean => Boolean(fromToken.feeOnTransfer) || Boolean(toToken.feeOnTransfer);
+
+  /** Exact-out applies to router swaps only; wrap/unwrap is always 1:1 and fee-on-transfer pairs stay exact-in. */
+  const isExactOut = (): boolean => lastEdited === "to" && !isWrap() && !isUnwrap() && !feeOnTransferPair();
 
   function doSwap(): void {
     const account = walletStore.get().account;
@@ -425,13 +443,33 @@ export function swapView(ctx: RouteContext): ViewResult {
           } else {
             data = encodeRouter("swapTokensForExactTokens", [amountOut, maxIn, path, account, deadline]);
           }
+          // No fee-safe exact-out form exists, so pre-flight the call from the
+          // account: a token that burns or taxes on transfer reverts here (the
+          // pair's K check trusts the pre-computed input). Switch the view to
+          // exact-in on the quoted input and let the user confirm that quote.
+          try {
+            await extensionProvider.call({ to: routerAddress(), data, from: account, value });
+          } catch (e) {
+            lastEdited = "from";
+            refreshQuote();
+            throw new Error(
+              `Exact output is not available for this token; the swap now uses the exact input instead. Review the quote and swap again. (${errText(e)})`,
+            );
+          }
         } else if (fromToken.isNative) {
-          data = encodeRouter("swapExactETHForTokens", [minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          // Exact-in uses the ...SupportingFeeOnTransferTokens variants: they derive each
+          // hop's input from the pair's actual balance delta and check amountOutMin on
+          // what the recipient really received, so tokens that burn or tax on transfer
+          // swap correctly (the standard forms trust the pre-computed amounts and revert
+          // with the pair's K check). Equally correct for normal tokens. The quote is
+          // pre-fee, so "Minimum received" (amountOutMin from slippage) is the real guard.
+          // No fee-safe exact-out form exists; the exact-out branch stays as is.
+          data = encodeRouter("swapExactETHForTokensSupportingFeeOnTransferTokens", [minWithSlippage(quotedOut, slippage), path, account, deadline]);
           value = amountIn;
         } else if (toToken.isNative) {
-          data = encodeRouter("swapExactTokensForETH", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          data = encodeRouter("swapExactTokensForETHSupportingFeeOnTransferTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         } else {
-          data = encodeRouter("swapExactTokensForTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          data = encodeRouter("swapExactTokensForTokensSupportingFeeOnTransferTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         }
         const amount = fromInput.getAmount();
         const outAmount = toInput.getAmount();

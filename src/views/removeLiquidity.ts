@@ -187,7 +187,10 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
           const token = aIsWq ? bAddr : aAddr;
           const tokenMin = aIsWq ? amountBMin : amountAMin;
           const ethMin = aIsWq ? amountAMin : amountBMin;
-          data = encodeRouter("removeLiquidityETH", [token, liquidity, tokenMin, ethMin, account, deadline]);
+          // ...SupportingFeeOnTransferTokens forwards the router's actual token balance;
+          // plain removeLiquidityETH forwards the pre-fee amount and reverts for tokens
+          // that burn or tax on transfer. Same arguments.
+          data = encodeRouter("removeLiquidityETHSupportingFeeOnTransferTokens", [token, liquidity, tokenMin, ethMin, account, deadline]);
         } else {
           data = encodeRouter("removeLiquidity", [aAddr, bAddr, liquidity, amountAMin, amountBMin, account, deadline]);
         }
