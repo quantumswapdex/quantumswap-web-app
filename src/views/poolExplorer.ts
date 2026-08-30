@@ -1,16 +1,24 @@
 /**
- * Pool Explorer: registry-driven table of pairs with reserves + derived price,
- * plus an optional heavier "Load all pairs from factory" walk.
+ * Pool Explorer: table of pools with reserves + derived price. Pages through
+ * the Swap Read API (sorted by liquidity or newest) when it is available;
+ * otherwise renders the registry with live RPC reserves (connected wallet),
+ * plus the heavier "Load all pairs" walk.
  */
 
 import { clear, el } from "../ui/dom";
 import type { ViewResult } from "../ui/router";
 import { emptyState, errText, loadingState, pageHeader } from "./shared";
-import { wqAddress } from "../config/releases";
-import { pair as pairContract } from "../lib/contracts";
-import { discoverAllFromFactory, discoverKnownPairs, registryStore } from "../lib/pairRegistry";
-import type { PairRecord } from "../config/pairs";
-import { sanitizeReserves } from "../lib/sanitizeResponse";
+import {
+  canRead,
+  discoverAllFromFactory,
+  getPools,
+  invalidate,
+  marketStore,
+  poolTvlQ,
+  type PoolPage,
+  type PoolView,
+} from "../lib/marketData";
+import type { ApiPoolSort } from "../lib/swapApi";
 import { formatCompact, formatPrice } from "../lib/format";
 import { walletStore } from "../wallet/wallet";
 import { sanitizeQuery } from "../lib/sanitize";
@@ -18,8 +26,13 @@ import { txStore } from "../lib/txStore";
 
 export function poolExplorerView(): ViewResult {
   let query = "";
+  let page = 1;
+  let sort: ApiPoolSort = "liquidity";
+  let current: PoolPage | null = null;
+  let loadSeq = 0;
   const tableWrap = el("div", {});
   const statusEl = el("div", { class: "ts", style: { marginBottom: "10px" } });
+  const pagerEl = el("div", { class: "toolbar", style: { marginTop: "10px", justifyContent: "space-between" } });
 
   const searchInput = el("input", {
     class: "filter-input",
@@ -33,10 +46,27 @@ export function poolExplorerView(): ViewResult {
     },
   }) as HTMLInputElement;
 
+  const sortBtn = el(
+    "button",
+    {
+      class: "btn btn-ghost",
+      "aria-label": "Sort pools",
+      on: {
+        click: () => {
+          sort = sort === "liquidity" ? "newest" : "liquidity";
+          page = 1;
+          sortBtn.textContent = sort === "liquidity" ? "Sort: liquidity" : "Sort: newest";
+          void load();
+        },
+      },
+    },
+    "Sort: liquidity",
+  );
+
   const loadAllBtn = el(
     "button",
     { class: "btn btn-ghost", on: { click: () => void loadAll() } },
-    "Load all pairs from factory",
+    "Load all pairs",
   );
 
   const createPairBtn = el(
@@ -48,37 +78,26 @@ export function poolExplorerView(): ViewResult {
   const node = el(
     "div",
     { class: "page" },
-    pageHeader("Pool Explorer", "Live reserves and prices for known QuantumSwap pairs."),
-    el("div", { class: "toolbar" }, searchInput, loadAllBtn, createPairBtn),
+    pageHeader("Pool Explorer", "Live reserves and prices for QuantumSwap pools."),
+    el("div", { class: "toolbar" }, searchInput, sortBtn, loadAllBtn, createPairBtn),
     statusEl,
     tableWrap,
+    pagerEl,
   );
-
-  const reservesCache = new Map<string, { r0: bigint; r1: bigint } | null>();
-
-  async function loadReserves(record: PairRecord): Promise<void> {
-    if (reservesCache.has(record.pairAddress)) return;
-    try {
-      const parsed = sanitizeReserves(await pairContract(record.pairAddress).getReserves());
-      reservesCache.set(record.pairAddress, parsed ? { r0: parsed.reserve0, r1: parsed.reserve1 } : null);
-    } catch {
-      reservesCache.set(record.pairAddress, null);
-    }
-    renderTable();
-  }
 
   function renderTable(): void {
     clear(tableWrap);
-    let records = registryStore.get();
+    clear(pagerEl);
+    let items = current?.items ?? [];
     if (query) {
-      records = records.filter((r) => `${r.token0.symbol} ${r.token1.symbol}`.toLowerCase().includes(query));
+      items = items.filter((v) => `${v.record.token0.symbol} ${v.record.token1.symbol}`.toLowerCase().includes(query));
     }
 
-    if (records.length === 0) {
+    if (items.length === 0) {
       tableWrap.appendChild(
         emptyState(
-          walletStore.get().status === "connected"
-            ? "No pairs found yet. Try loading all pairs from the factory, or create one."
+          canRead()
+            ? "No pools found yet. Try loading all pairs, or create one."
             : "Connect your wallet to discover and load pool data.",
           el("a", { class: "btn btn-primary", href: "#/pools/create" }, "Create a pair"),
         ),
@@ -86,19 +105,15 @@ export function poolExplorerView(): ViewResult {
       return;
     }
 
-    const rows = records.map((record) => {
-      const cached = reservesCache.get(record.pairAddress);
-      if (cached === undefined) void loadReserves(record);
+    const rows = items.map((view) => {
+      const { record } = view;
       let priceText = "-";
       let tvlText = "-";
-      if (cached) {
-        const price0 = Number(cached.r1) / Number(cached.r0 || 1n);
+      if (view.active) {
+        const price0 = Number(view.reserve1) / Number(view.reserve0 || 1n);
         priceText = `${formatPrice(price0)} ${record.token1.symbol}/${record.token0.symbol}`;
-        if (record.token0.address.toLowerCase() === wqAddress().toLowerCase()) {
-          tvlText = `${formatCompact(cached.r0 * 2n, record.token0.decimals)} Q`;
-        } else if (record.token1.address.toLowerCase() === wqAddress().toLowerCase()) {
-          tvlText = `${formatCompact(cached.r1 * 2n, record.token1.decimals)} Q`;
-        }
+        const tvl = poolTvlQ(view);
+        if (tvl !== null) tvlText = `${formatCompact(tvl, 18)} Q`;
       }
 
       return el(
@@ -108,14 +123,14 @@ export function poolExplorerView(): ViewResult {
         el(
           "td",
           {},
-          cached ? `${formatCompact(cached.r0, record.token0.decimals)} ${record.token0.symbol} / ${formatCompact(cached.r1, record.token1.decimals)} ${record.token1.symbol}` : "loading...",
+          `${formatCompact(view.reserve0, record.token0.decimals)} ${record.token0.symbol} / ${formatCompact(view.reserve1, record.token1.decimals)} ${record.token1.symbol}`,
         ),
         el("td", {}, priceText),
         el("td", {}, tvlText),
         el(
           "td",
           { style: { textAlign: "right" } },
-          el("a", { class: "link", href: `#/swap`, on: { click: (e: Event) => e.stopPropagation() } }, "Swap"),
+          el("a", { class: "link", href: `#/swap/${record.token0.address}/${record.token1.address}`, on: { click: (e: Event) => e.stopPropagation() } }, "Swap"),
         ),
       );
     });
@@ -143,31 +158,58 @@ export function poolExplorerView(): ViewResult {
       ),
     );
     tableWrap.appendChild(table);
+
+    if (current && current.source === "api" && current.pageCount > 1) {
+      const prevBtn = el(
+        "button",
+        { class: "btn btn-ghost", disabled: page <= 1 ? true : undefined, on: { click: () => void goTo(page - 1) } },
+        "Previous",
+      );
+      const nextBtn = el(
+        "button",
+        { class: "btn btn-ghost", disabled: page >= current.pageCount ? true : undefined, on: { click: () => void goTo(page + 1) } },
+        "Next",
+      );
+      pagerEl.append(prevBtn, el("span", { class: "ts" }, `Page ${page} of ${current.pageCount} · ${current.totalItems} pools`), nextBtn);
+    }
   }
 
-  async function discover(): Promise<void> {
-    if (walletStore.get().status !== "connected") {
+  async function goTo(next: number): Promise<void> {
+    page = Math.max(1, next);
+    await load();
+  }
+
+  async function load(): Promise<void> {
+    const seq = ++loadSeq;
+    if (!canRead()) {
+      current = null;
+      statusEl.textContent = "";
       renderTable();
       return;
     }
-    statusEl.textContent = "Discovering known pairs...";
+    statusEl.textContent = "Loading pools...";
     try {
-      await discoverKnownPairs();
-      statusEl.textContent = "";
+      const result = await getPools(page, sort);
+      if (seq !== loadSeq) return;
+      current = result;
+      const m = marketStore.get();
+      statusEl.textContent = result.source === "api" && m.indexedBlock !== null ? `Indexed at block ${m.indexedBlock}` : "";
     } catch (err) {
+      if (seq !== loadSeq) return;
+      current = null;
       statusEl.textContent = errText(err);
     }
     renderTable();
   }
 
   async function loadAll(): Promise<void> {
-    if (walletStore.get().status !== "connected") {
+    if (!canRead()) {
       statusEl.textContent = "Connect your wallet first.";
       return;
     }
     loadAllBtn.setAttribute("disabled", "");
-    statusEl.textContent = "Loading all pairs from the factory (this can take a moment)...";
-    tableWrap.replaceChildren(loadingState("Walking the factory..."));
+    statusEl.textContent = "Loading all pairs (this can take a moment)...";
+    tableWrap.replaceChildren(loadingState("Loading pairs..."));
     try {
       await discoverAllFromFactory();
       statusEl.textContent = "";
@@ -175,34 +217,39 @@ export function poolExplorerView(): ViewResult {
       statusEl.textContent = errText(err);
     }
     loadAllBtn.removeAttribute("disabled");
-    renderTable();
+    await load();
   }
 
-  const unsub = registryStore.subscribe(() => renderTable());
-  const unsubWallet = walletStore.subscribe(() => void discover());
+  const unsubWallet = walletStore.subscribe(() => void load());
+  const unsubMarket = marketStore.subscribe((s) => {
+    // Re-load when the API becomes available or drops away.
+    if (s.status === "ok" || s.status === "unavailable" || s.status === "no-dex") void load();
+  });
 
   // When a transaction confirms (swap, add/remove liquidity, ...), the cached
-  // reserves are stale: drop the cache so the table re-reads on next render.
+  // reserves are stale: drop memos and re-read on the next render.
   let txStatuses = new Map(txStore.get().map((r) => [r.hash, r.status]));
   const unsubTx = txStore.subscribe((list) => {
     const settled = list.some((r) => txStatuses.get(r.hash) === "pending" && r.status === "succeeded");
     txStatuses = new Map(list.map((r) => [r.hash, r.status]));
     if (settled) {
-      reservesCache.clear();
-      renderTable();
+      invalidate();
+      void load();
     }
   });
 
-  void discover();
+  void load();
 
   return {
     node,
     theme: "cyan",
     title: "Pool Explorer",
     cleanup: () => {
-      unsub();
       unsubWallet();
+      unsubMarket();
       unsubTx();
     },
   };
 }
+
+export type { PoolView };

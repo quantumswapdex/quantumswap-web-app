@@ -93,6 +93,42 @@ export function sanitizeQuery(input: unknown): string {
   return stripHostile(input).slice(0, 80);
 }
 
+/** Longest accepted API base URL. */
+export const MAX_URL_LEN = 200;
+
+/**
+ * Validate + normalize an HTTP(S) base URL (Swap Read API endpoint of a
+ * release). Accepts only http/https, no credentials, query or fragment, at most
+ * MAX_URL_LEN characters; returns origin + pathname without a trailing slash,
+ * or null when invalid. Never accepts javascript:, data:, file: or blob: URLs.
+ */
+export function sanitizeUrl(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const cleaned = stripHostile(input).replace(/\s+/g, "");
+  if (!cleaned || cleaned.length > MAX_URL_LEN) return null;
+  let url: URL;
+  try {
+    url = new URL(cleaned);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password || url.search || url.hash) return null;
+  if (!url.hostname) return null;
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return url.origin + pathname;
+}
+
+/** Swap Read API dexId: 1..64 of [A-Za-z0-9_-] (mirrors the API contract). */
+export const DEX_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Validate a Swap Read API dexId; returns it trimmed, or null when invalid. */
+export function sanitizeDexId(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const s = stripHostile(input).replace(/\s+/g, "");
+  return DEX_ID_RE.test(s) ? s : null;
+}
+
 /** Clamp a slippage percentage to a sane range. */
 export function sanitizeSlippage(input: unknown): number | null {
   const n = Number(typeof input === "string" ? stripHostile(input) : input);

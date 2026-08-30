@@ -75,6 +75,24 @@ export function sanitizeTxHash(value: unknown): string | null {
 }
 
 /**
+ * Normalize an object-shaped reserves record (Swap Read API pools / route
+ * pairs: { token0, token1, reserve0, reserve1 } with hex quantities) into
+ * bigint reserves. Returns null when any field is malformed.
+ */
+export function sanitizeApiReserves(
+  value: unknown,
+): { token0: string; token1: string; reserve0: bigint; reserve1: bigint } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const token0 = sanitizeAddressResponse(v.token0);
+  const token1 = sanitizeAddressResponse(v.token1);
+  const reserve0 = toBigIntOrNull(v.reserve0);
+  const reserve1 = toBigIntOrNull(v.reserve1);
+  if (!token0 || !token1 || reserve0 === null || reserve1 === null) return null;
+  return { token0: token0.toLowerCase(), token1: token1.toLowerCase(), reserve0, reserve1 };
+}
+
+/**
  * Normalize a getReserves() tuple into { reserve0, reserve1, blockTimestampLast }.
  * Returns null if the tuple is malformed.
  */

@@ -17,6 +17,8 @@ import {
   DEFAULT_PAIR_TOKEN_B,
   NATIVE_TOKEN,
   LP_FEE_BPS,
+  impersonatesStablecoin,
+  isRecognizedAddress,
   type TokenInfo,
 } from "../config/chain";
 import { routerAddress, wqAddress } from "../config/releases";
@@ -27,14 +29,15 @@ import {
   encodeRouter,
   encodeWq,
 } from "../lib/contracts";
-import { checkImport, findToken, importToken, toPathAddress } from "../tokens/tokenList";
+import { checkImport, findToken, importToken, toPathAddress, type TokenMetadata } from "../tokens/tokenList";
 import { confirmImportToken } from "../tokens/addWarning";
-import { findBestRoute, findBestRouteExactOut, InsufficientLiquidityError } from "../lib/routeFinder";
+import { findBestRoute, findBestRouteExactOut, InsufficientLiquidityError, type QuoteSource } from "../lib/routeFinder";
 import { getRegistry } from "../lib/pairRegistry";
+import { canRead, marketStore, tokenMetadataForImport } from "../lib/marketData";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
 import { formatAmount, formatPrice } from "../lib/format";
 import { deadlineFrom, maxWithSlippage, minWithSlippage } from "../lib/quoteMath";
-import { getLatestBlockTimestamp } from "../lib/extensionProvider";
+import { extensionProvider, getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
@@ -131,6 +134,14 @@ export function swapView(ctx: RouteContext): ViewResult {
     gearIcon(18),
   );
 
+  // Shown under the To field while a fee-on-transfer token is selected.
+  const feeNote = el(
+    "p",
+    { class: "cf-note" },
+    "Exact output is not available for tokens that burn or tax on transfer. Enter the quantity to swap in the From field.",
+  );
+  feeNote.hidden = true;
+
   // Swap-only landing: the card carries its own title, no page header above it.
   const node = el(
     "section",
@@ -139,6 +150,7 @@ export function swapView(ctx: RouteContext): ViewResult {
     fromInput.root,
     el("div", { class: "flip" }, flipBtn),
     toInput.root,
+    feeNote,
     detailBox,
     actionBox,
   );
@@ -147,11 +159,17 @@ export function swapView(ctx: RouteContext): ViewResult {
   const isUnwrap = (): boolean => fromToken.address === wqAddress() && Boolean(toToken.isNative);
 
   function updateLabels(): void {
+    const locked = feeOnTransferPair();
     fromInput.setLabel(lastEdited === "to" ? "From (estimated)" : "From");
     toInput.setLabel(lastEdited === "to" ? "To" : "To (estimated)");
+    // A fee-on-transfer side has no exact-output form: the To field only
+    // shows the estimate and the note says why.
+    toInput.setReadonly(locked);
+    feeNote.hidden = !locked;
   }
 
   function refreshQuote(): void {
+    if (lastEdited === "to" && feeOnTransferPair()) lastEdited = "from";
     const token = ++quoteToken;
     clear(detailBox);
     pairMissing = false;
@@ -180,8 +198,8 @@ export function swapView(ctx: RouteContext): ViewResult {
       return;
     }
 
-    if (walletStore.get().status !== "connected") {
-      detailBox.appendChild(el("p", { class: "cf-note" }, "Connect your wallet to fetch a live quote."));
+    if (!canRead()) {
+      detailBox.appendChild(el("p", { class: "cf-note" }, "Market data is unavailable. Connect your wallet to fetch a live quote."));
       renderAction();
       return;
     }
@@ -204,6 +222,7 @@ export function swapView(ctx: RouteContext): ViewResult {
       detailBox.appendChild(statRow("Minimum received", `${formatAmount(minOut, toToken.decimals, 6)} ${toToken.symbol}`));
       detailBox.appendChild(statRow(`LP fee (${(LP_FEE_BPS / 100).toFixed(2)}% / hop)`, `${formatAmount((amountIn * BigInt(LP_FEE_BPS)) / 10000n, fromToken.decimals, 6)} ${fromToken.symbol}`));
       detailBox.appendChild(statRow("Route", `${route.path.map((p) => tokenSymbol(p)).join(" \u203a ")} \u00b7 ${hops} hop${hops > 1 ? "s" : ""}`));
+      appendQuoteSource(route.source, route.indexedBlock);
     } catch (err) {
       if (token !== quoteToken) return;
       quotedOut = 0n;
@@ -236,8 +255,8 @@ export function swapView(ctx: RouteContext): ViewResult {
       return;
     }
 
-    if (walletStore.get().status !== "connected") {
-      detailBox.appendChild(el("p", { class: "cf-note" }, "Connect your wallet to fetch a live quote."));
+    if (!canRead()) {
+      detailBox.appendChild(el("p", { class: "cf-note" }, "Market data is unavailable. Connect your wallet to fetch a live quote."));
       renderAction();
       return;
     }
@@ -260,6 +279,7 @@ export function swapView(ctx: RouteContext): ViewResult {
       detailBox.appendChild(statRow("Maximum sold", `${formatAmount(maxIn, fromToken.decimals, 6)} ${fromToken.symbol}`));
       detailBox.appendChild(statRow(`LP fee (${(LP_FEE_BPS / 100).toFixed(2)}% / hop)`, `${formatAmount((route.amountIn * BigInt(LP_FEE_BPS)) / 10000n, fromToken.decimals, 6)} ${fromToken.symbol}`));
       detailBox.appendChild(statRow("Route", `${route.path.map((p) => tokenSymbol(p)).join(" \u203a ")} \u00b7 ${hops} hop${hops > 1 ? "s" : ""}`));
+      appendQuoteSource(route.source, route.indexedBlock);
     } catch (err) {
       if (token !== quoteToken) return;
       quotedIn = 0n;
@@ -273,6 +293,14 @@ export function swapView(ctx: RouteContext): ViewResult {
       }
     }
     renderAction();
+  }
+
+  /** Label estimates computed from indexed reserves (no wallet / router unavailable). */
+  function appendQuoteSource(source: QuoteSource, indexedBlock?: number): void {
+    if (source !== "api-estimate") return;
+    detailBox.appendChild(
+      statRow("Quote", `Estimated from indexed reserves${indexedBlock !== undefined ? ` \u00b7 block ${indexedBlock}` : ""}`),
+    );
   }
 
   function renderNoRoute(err: unknown): void {
@@ -336,8 +364,11 @@ export function swapView(ctx: RouteContext): ViewResult {
     );
   }
 
-  /** Exact-out applies to router swaps only; wrap/unwrap is always 1:1. */
-  const isExactOut = (): boolean => lastEdited === "to" && !isWrap() && !isUnwrap();
+  /** Either side burns or taxes on transfer: no fee-safe exact-output form exists. */
+  const feeOnTransferPair = (): boolean => Boolean(fromToken.feeOnTransfer) || Boolean(toToken.feeOnTransfer);
+
+  /** Exact-out applies to router swaps only; wrap/unwrap is always 1:1 and fee-on-transfer pairs stay exact-in. */
+  const isExactOut = (): boolean => lastEdited === "to" && !isWrap() && !isUnwrap() && !feeOnTransferPair();
 
   function doSwap(): void {
     const account = walletStore.get().account;
@@ -425,13 +456,33 @@ export function swapView(ctx: RouteContext): ViewResult {
           } else {
             data = encodeRouter("swapTokensForExactTokens", [amountOut, maxIn, path, account, deadline]);
           }
+          // No fee-safe exact-out form exists, so pre-flight the call from the
+          // account: a token that burns or taxes on transfer reverts here (the
+          // pair's K check trusts the pre-computed input). Switch the view to
+          // exact-in on the quoted input and let the user confirm that quote.
+          try {
+            await extensionProvider.call({ to: routerAddress(), data, from: account, value });
+          } catch (e) {
+            lastEdited = "from";
+            refreshQuote();
+            throw new Error(
+              `Exact output is not available for this token; the swap now uses the exact input instead. Review the quote and swap again. (${errText(e)})`,
+            );
+          }
         } else if (fromToken.isNative) {
-          data = encodeRouter("swapExactETHForTokens", [minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          // Exact-in uses the ...SupportingFeeOnTransferTokens variants: they derive each
+          // hop's input from the pair's actual balance delta and check amountOutMin on
+          // what the recipient really received, so tokens that burn or tax on transfer
+          // swap correctly (the standard forms trust the pre-computed amounts and revert
+          // with the pair's K check). Equally correct for normal tokens. The quote is
+          // pre-fee, so "Minimum received" (amountOutMin from slippage) is the real guard.
+          // No fee-safe exact-out form exists; the exact-out branch stays as is.
+          data = encodeRouter("swapExactETHForTokensSupportingFeeOnTransferTokens", [minWithSlippage(quotedOut, slippage), path, account, deadline]);
           value = amountIn;
         } else if (toToken.isNative) {
-          data = encodeRouter("swapExactTokensForETH", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          data = encodeRouter("swapExactTokensForETHSupportingFeeOnTransferTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         } else {
-          data = encodeRouter("swapExactTokensForTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
+          data = encodeRouter("swapExactTokensForTokensSupportingFeeOnTransferTokens", [amountIn, minWithSlippage(quotedOut, slippage), path, account, deadline]);
         }
         const amount = fromInput.getAmount();
         const outAmount = toInput.getAmount();
@@ -494,7 +545,7 @@ export function swapView(ctx: RouteContext): ViewResult {
   }
   function tryRouteImport(): void {
     if (routeImportAttempted) return;
-    if (walletStore.get().status !== "connected") return;
+    if (!canRead()) return;
     routeImportAttempted = true;
     void maybeImportFromRoute();
   }
@@ -527,14 +578,29 @@ export function swapView(ctx: RouteContext): ViewResult {
   const unsub = walletStore.subscribe(() => {
     fromInput.refreshBalance();
     toInput.refreshBalance();
-    renderAction();
+    // Connecting upgrades an indexed-reserve estimate to a router quote.
+    refreshQuote();
     tryRouteImport();
+  });
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") {
+      refreshQuote();
+      tryRouteImport();
+    }
   });
 
   renderAction();
   tryRouteImport();
 
-  return { node, theme: "violet", title: "Swap", cleanup: () => unsub() };
+  return {
+    node,
+    theme: "violet",
+    title: "Swap",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
 }
 
 function tokenSymbol(pathAddr: string): string {
@@ -581,10 +647,19 @@ function resolveParamSync(param: string): TokenInfo | null {
  * the imported token, or null if lookup failed or the user declined.
  */
 async function importUnrecognized(addr: string): Promise<TokenInfo | null> {
-  if (walletStore.get().status !== "connected") return null;
-  const check = await checkImport(addr);
-  if (!check.ok || !check.token) return null;
-  const confirmed = await confirmImportToken(check.token);
+  let meta: TokenMetadata | null = null;
+  if (walletStore.get().status === "connected") {
+    const check = await checkImport(addr);
+    if (!check.ok || !check.token) return null;
+    meta = check.token;
+  } else {
+    // No wallet: the Swap Read API can name the token (and only then).
+    meta = await tokenMetadataForImport(addr);
+    if (!meta) return null;
+    if (findToken(meta.address)) return null;
+    if (!isRecognizedAddress(meta.address) && impersonatesStablecoin(meta.symbol, meta.name)) return null;
+  }
+  const confirmed = await confirmImportToken(meta);
   if (!confirmed) return null;
-  return importToken(check.token);
+  return importToken(meta);
 }

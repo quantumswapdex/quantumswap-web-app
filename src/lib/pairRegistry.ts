@@ -3,6 +3,11 @@
  * user-discovered pairs to localStorage, and resolves pair addresses via
  * factory.getPair on demand (absorbing the result). Explorers read from here so
  * cold start costs zero RPC beyond the reserves of visible pairs.
+ *
+ * The `*Rpc` discovery functions are the chain (extension RPC) path; views use
+ * the API-first wrappers in `./marketData.ts` (`resolvePairAddress`,
+ * `discoverKnownPairs`, `discoverAllFromFactory`), which call these only as
+ * the fallback.
  */
 
 import { createStore } from "../ui/store";
@@ -119,11 +124,11 @@ function tokenRefFor(address: string): PairTokenRef {
 }
 
 /**
- * Resolve a pair address for two tokens: check the registry first, else call
- * factory.getPair. Returns the pair address or null if none exists. Absorbs a
- * newly found pair into the registry.
+ * Resolve a pair address for two tokens over RPC: check the registry first,
+ * else call factory.getPair. Returns the pair address or null if none exists.
+ * Absorbs a newly found pair into the registry.
  */
-export async function resolvePairAddress(tokenA: TokenInfo, tokenB: TokenInfo): Promise<string | null> {
+export async function resolvePairAddressRpc(tokenA: TokenInfo, tokenB: TokenInfo): Promise<string | null> {
   const aAddr = toPathAddress(tokenA);
   const bAddr = toPathAddress(tokenB);
   if (aAddr.toLowerCase() === bAddr.toLowerCase()) return null;
@@ -144,8 +149,8 @@ export async function resolvePairAddress(tokenA: TokenInfo, tokenB: TokenInfo): 
   return pairAddr;
 }
 
-/** Discover pairs among the built-in/imported tokens (a handful of getPair calls). */
-export async function discoverKnownPairs(): Promise<void> {
+/** Discover pairs among the built-in/imported tokens over RPC (a handful of getPair calls). */
+export async function discoverKnownPairsRpc(): Promise<void> {
   const tokens = getAllTokens();
   const seen = new Set(registryStore.get().map((p) => pairKey(p.token0.address, p.token1.address)));
   for (let i = 0; i < tokens.length; i++) {
@@ -156,7 +161,7 @@ export async function discoverKnownPairs(): Promise<void> {
       const key = pairKey(aAddr, bAddr);
       if (seen.has(key)) continue;
       try {
-        await resolvePairAddress(tokens[i], tokens[j]);
+        await resolvePairAddressRpc(tokens[i], tokens[j]);
       } catch {
         /* skip unreachable pair */
       }
@@ -166,10 +171,11 @@ export async function discoverKnownPairs(): Promise<void> {
 }
 
 /**
- * Heavier walk: enumerate every pair from the factory and merge it in, reading
- * token metadata per side. Used by the explorer's optional "Load all pairs".
+ * Heavier RPC walk: enumerate every pair from the factory and merge it in,
+ * reading token metadata per side. Used by the explorer's optional "Load all
+ * pairs" when the Swap Read API is unavailable.
  */
-export async function discoverAllFromFactory(limit = 200): Promise<void> {
+export async function discoverAllFromFactoryRpc(limit = 200): Promise<void> {
   const f = factory();
   const lengthRaw = await f.allPairsLength();
   const total = Math.min(Number(lengthRaw ?? 0), limit);

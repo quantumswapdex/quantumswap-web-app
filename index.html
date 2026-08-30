@@ -12,16 +12,19 @@
     <!--
       Defense-in-depth CSP. Fully self-contained: no external CSS/font/image
       hosts. 'unsafe-inline' is required for the preloader bootstrap + Vite/Tailwind
-      injected styles; scripts are same-origin only. connect-src is intentionally
-      'self' because all chain traffic is proxied by the browser extension
-      (window.quantumcoin), never fetched by this page directly.
+      injected styles; scripts are same-origin only. connect-src allows 'self'
+      (all chain traffic is proxied by the browser extension, window.quantumcoin)
+      plus the Swap Read API origin (src/config/chain.ts SWAP_API_URL), the only
+      endpoint this page fetches, and the loopback devnet listener used by local
+      testing. A custom release pointing elsewhere is blocked here and the app
+      falls back to extension RPC.
       Note: 'frame-ancestors' / X-Frame-Options only work as HTTP response headers
       (ignored in a <meta> tag), so set them at the host/CDN for clickjacking
       protection rather than here.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' https://api.quantumswap.com http://127.0.0.1:8182 http://localhost:8182; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <title>QuantumSwap Web App (Beta/Test Version)</title>
     <style>

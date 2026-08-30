@@ -7,11 +7,11 @@ import { addressPill } from "../ui/components/addressPill";
 import { type TokenInfo } from "../config/chain";
 import { wqAddress } from "../config/releases";
 import { pair as pairContract } from "../lib/contracts";
-import { findToken, readTokenMetadata } from "../tokens/tokenList";
+import { findToken } from "../tokens/tokenList";
 import { sanitizeAddress } from "../lib/sanitize";
-import { sanitizeAddressResponse, sanitizeReserves } from "../lib/sanitizeResponse";
 import { formatAmount, formatCompact, formatPrice } from "../lib/format";
-import { walletStore } from "../wallet/wallet";
+import { canRead, getPool, marketStore, type PoolView } from "../lib/marketData";
+import { connectWallet, walletStore } from "../wallet/wallet";
 
 export function pairDetailView(ctx: RouteContext): ViewResult {
   const pairAddress = sanitizeAddress(ctx.params.pairAddress);
@@ -26,90 +26,125 @@ export function pairDetailView(ctx: RouteContext): ViewResult {
   const body = el("div", {});
   container.appendChild(body);
   body.appendChild(loadingState("Loading pair..."));
+  let loadSeq = 0;
 
   async function load(): Promise<void> {
-    try {
-      const p = pairContract(pairAddress!);
-      const account = walletStore.get().account;
-      const [t0Raw, t1Raw, reservesRaw, totalSupplyRaw] = await Promise.all([
-        p.token0(),
-        p.token1(),
-        p.getReserves(),
-        p.totalSupply(),
-      ]);
-      const t0 = sanitizeAddressResponse(t0Raw);
-      const t1 = sanitizeAddressResponse(t1Raw);
-      const reserves = sanitizeReserves(reservesRaw);
-      if (!t0 || !t1 || !reserves) throw new Error("Could not read pair state");
-      const totalSupply = typeof totalSupplyRaw === "bigint" ? totalSupplyRaw : BigInt(totalSupplyRaw ?? 0);
-      const [token0, token1] = await Promise.all([resolveToken(t0), resolveToken(t1)]);
-      let lpBalance = 0n;
-      if (account) {
-        const balRaw = await p.balanceOf(account).catch(() => 0n);
-        lpBalance = typeof balRaw === "bigint" ? balRaw : BigInt(balRaw ?? 0);
-      }
-
+    const seq = ++loadSeq;
+    if (!canRead()) {
       clear(body);
-      const price01 = Number(formatAmount(reserves.reserve1, token1.decimals, 18)) / Number(formatAmount(reserves.reserve0, token0.decimals, 18) || "1");
-      const price10 = price01 > 0 ? 1 / price01 : 0;
-      const share = totalSupply > 0n ? Number(lpBalance) / Number(totalSupply) : 0;
-      const underlying0 = totalSupply > 0n ? (lpBalance * reserves.reserve0) / totalSupply : 0n;
-      const underlying1 = totalSupply > 0n ? (lpBalance * reserves.reserve1) / totalSupply : 0n;
-
       body.appendChild(
-        el(
-          "div",
-          { class: "stack" },
-          card(
-            el("h3", { style: { fontSize: "18px" } }, `${token0.symbol} / ${token1.symbol}`),
-            addressPill(pairAddress!),
-            el("div", { class: "grid2", style: { marginTop: "12px" } }, tokenLine(token0), tokenLine(token1)),
-          ),
-          card(
-            el("h3", {}, "Reserves & price"),
-            el(
-              "div",
-              { class: "details" },
-              statRow(`Reserve ${token0.symbol}`, `${formatCompact(reserves.reserve0, token0.decimals)}`),
-              statRow(`Reserve ${token1.symbol}`, `${formatCompact(reserves.reserve1, token1.decimals)}`),
-              statRow("Price", `1 ${token0.symbol} = ${formatPrice(price01)} ${token1.symbol}`),
-              statRow("Price (inverse)", `1 ${token1.symbol} = ${formatPrice(price10)} ${token0.symbol}`),
-              statRow("LP total supply", formatAmount(totalSupply, 18, 6)),
-              statRow("LP fee", "0.30%"),
-            ),
-          ),
-          account
-            ? card(
-                el("h3", {}, "Your position"),
-                el(
-                  "div",
-                  { class: "details" },
-                  statRow("LP balance", formatAmount(lpBalance, 18, 6)),
-                  statRow("Pool share", `${(share * 100).toFixed(4)}%`),
-                  statRow(`Pooled ${token0.symbol}`, formatAmount(underlying0, token0.decimals, 6)),
-                  statRow(`Pooled ${token1.symbol}`, formatAmount(underlying1, token1.decimals, 6)),
-                ),
-              )
-            : null,
-          el(
-            "div",
-            { class: "btn-row" },
-            el("a", { class: "btn btn-primary", href: `#/pools/add/${token0.address}/${token1.address}` }, "Add liquidity"),
-            el("a", { class: "btn btn-ghost", href: `#/pools/remove/${pairAddress}` }, "Remove"),
-            el("a", { class: "btn btn-ghost", href: "#/swap" }, "Swap"),
-          ),
+        card(
+          el("p", {}, "Connect your wallet to load this pair from the chain."),
+          el("div", { class: "btn-row" }, el("button", { class: "btn btn-primary", on: { click: () => void connectWallet() } }, "Connect wallet")),
         ),
       );
+      return;
+    }
+    try {
+      const view = await getPool(pairAddress!);
+      if (seq !== loadSeq) return;
+      if (!view) throw new Error("No pool exists at this address on the active release.");
+      const account = walletStore.get().account;
+      const token0 = tokenInfoFor(view, 0);
+      const token1 = tokenInfoFor(view, 1);
+      const lpBalance = account ? await readLpBalance(pairAddress!, account) : 0n;
+      if (seq !== loadSeq) return;
+      render(view, token0, token1, account, lpBalance);
     } catch (err) {
+      if (seq !== loadSeq) return;
       clear(body);
       body.appendChild(errorState(errText(err)));
     }
   }
 
+  function render(view: PoolView, token0: TokenInfo, token1: TokenInfo, account: string | null, lpBalance: bigint): void {
+    const reserves = { reserve0: view.reserve0, reserve1: view.reserve1 };
+    const totalSupply = view.lpTotalSupply;
+    clear(body);
+    const price01 = Number(formatAmount(reserves.reserve1, token1.decimals, 18)) / Number(formatAmount(reserves.reserve0, token0.decimals, 18) || "1");
+    const price10 = price01 > 0 ? 1 / price01 : 0;
+    const share = totalSupply > 0n ? Number(lpBalance) / Number(totalSupply) : 0;
+    const underlying0 = totalSupply > 0n ? (lpBalance * reserves.reserve0) / totalSupply : 0n;
+    const underlying1 = totalSupply > 0n ? (lpBalance * reserves.reserve1) / totalSupply : 0n;
+    const m = marketStore.get();
+    const indexedNote = m.status === "ok" && m.indexedBlock !== null ? statRow("Indexed at block", String(m.indexedBlock)) : null;
+
+    body.appendChild(
+      el(
+        "div",
+        { class: "stack" },
+        card(
+          el("h3", { style: { fontSize: "18px" } }, `${token0.symbol} / ${token1.symbol}`),
+          addressPill(pairAddress!),
+          el("div", { class: "grid2", style: { marginTop: "12px" } }, tokenLine(token0), tokenLine(token1)),
+        ),
+        card(
+          el("h3", {}, "Reserves & price"),
+          el(
+            "div",
+            { class: "details" },
+            statRow(`Reserve ${token0.symbol}`, `${formatCompact(reserves.reserve0, token0.decimals)}`),
+            statRow(`Reserve ${token1.symbol}`, `${formatCompact(reserves.reserve1, token1.decimals)}`),
+            statRow("Price", `1 ${token0.symbol} = ${formatPrice(price01)} ${token1.symbol}`),
+            statRow("Price (inverse)", `1 ${token1.symbol} = ${formatPrice(price10)} ${token0.symbol}`),
+            statRow("LP total supply", formatAmount(totalSupply, 18, 6)),
+            statRow("LP fee", "0.30%"),
+            view.swapCount !== undefined ? statRow("Swaps", String(view.swapCount)) : null,
+            indexedNote,
+          ),
+        ),
+        account
+          ? card(
+              el("h3", {}, "Your position"),
+              el(
+                "div",
+                { class: "details" },
+                statRow("LP balance", formatAmount(lpBalance, 18, 6)),
+                statRow("Pool share", `${(share * 100).toFixed(4)}%`),
+                statRow(`Pooled ${token0.symbol}`, formatAmount(underlying0, token0.decimals, 6)),
+                statRow(`Pooled ${token1.symbol}`, formatAmount(underlying1, token1.decimals, 6)),
+              ),
+            )
+          : null,
+        el(
+          "div",
+          { class: "btn-row" },
+          el("a", { class: "btn btn-primary", href: `#/pools/add/${token0.address}/${token1.address}` }, "Add liquidity"),
+          el("a", { class: "btn btn-ghost", href: `#/pools/remove/${pairAddress}` }, "Remove"),
+          el("a", { class: "btn btn-ghost", href: `#/swap/${token0.address}/${token1.address}` }, "Swap"),
+        ),
+      ),
+    );
+  }
+
   const unsub = walletStore.subscribe(() => void load());
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") void load();
+  });
   void load();
 
-  return { node: container, theme: "cyan", title: "Pair detail", cleanup: () => unsub() };
+  return {
+    node: container,
+    theme: "cyan",
+    title: "Pair detail",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
+}
+
+/**
+ * LP balance of the connected account: an RPC read (wallet state), best effort.
+ */
+async function readLpBalance(pairAddress: string, account: string): Promise<bigint> {
+  if (walletStore.get().status !== "connected") return 0n;
+  try {
+    const balRaw = await pairContract(pairAddress).balanceOf(account);
+    return typeof balRaw === "bigint" ? balRaw : BigInt(balRaw ?? 0);
+  } catch {
+    return 0n;
+  }
 }
 
 function tokenLine(token: TokenInfo): HTMLElement {
@@ -126,15 +161,15 @@ function tokenLine(token: TokenInfo): HTMLElement {
   );
 }
 
-async function resolveToken(address: string): Promise<TokenInfo> {
-  if (address.toLowerCase() === wqAddress().toLowerCase()) {
+/** UI token for one side of a pool: the token list first, then API facts, then the registry ref. */
+function tokenInfoFor(view: PoolView, side: 0 | 1): TokenInfo {
+  const ref = side === 0 ? view.record.token0 : view.record.token1;
+  const facts = side === 0 ? view.facts?.token0 : view.facts?.token1;
+  if (ref.address.toLowerCase() === wqAddress().toLowerCase()) {
     return findToken(wqAddress()) ?? { address: wqAddress(), symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
   }
-  const known = findToken(address);
+  const known = findToken(ref.address);
   if (known) return known;
-  try {
-    return await readTokenMetadata(address).then((m) => ({ address: m.address, symbol: m.symbol, name: m.name, decimals: m.decimals }));
-  } catch {
-    return { address, symbol: "TKN", name: "Unknown Token", decimals: 18 };
-  }
+  const name = facts?.identityKnown && facts.name ? facts.name : ref.symbol === "TKN" ? "Unknown Token" : ref.symbol;
+  return { address: ref.address, symbol: ref.symbol, name, decimals: ref.decimals };
 }

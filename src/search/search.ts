@@ -10,11 +10,11 @@ import { openModal, type ModalHandle } from "../ui/components/modal";
 import { addressPill } from "../ui/components/addressPill";
 import { shortAddress } from "../lib/format";
 import { looksLikeAddress, sanitizeAddress, sanitizeQuery } from "../lib/sanitize";
-import { sanitizeAddressResponse, sanitizeReserves } from "../lib/sanitizeResponse";
-import { pair as pairContract } from "../lib/contracts";
-import { getAllTokens, checkImport, importToken, readTokenMetadata, toPathAddress } from "../tokens/tokenList";
+import { getAllTokens, checkImport, importToken, type ImportCheck, type TokenMetadata } from "../tokens/tokenList";
 import { confirmImportToken } from "../tokens/addWarning";
-import { absorbDiscoveredPair, getRegistry } from "../lib/pairRegistry";
+import { getRegistry } from "../lib/pairRegistry";
+import { canRead, getPool, tokenMetadataForImport } from "../lib/marketData";
+import { walletStore } from "../wallet/wallet";
 import { router } from "../app/router";
 
 export function openGlobalSearch(rawQuery: string): void {
@@ -101,28 +101,18 @@ async function probeAddress(query: string, results: HTMLElement, status: HTMLEle
     return;
   }
 
-  status.textContent = "Looking up address on-chain...";
+  if (!canRead()) {
+    status.textContent = "Connect your wallet to look up this address on-chain.";
+    return;
+  }
+  status.textContent = "Looking up address...";
 
-  // 3) Pair probe: token0 + token1 + reserves.
+  // 3) Pair probe (Swap Read API, then chain): the pool is absorbed into the registry.
   try {
-    const p = pairContract(address);
-    const [t0Raw, t1Raw, reservesRaw] = await Promise.all([
-      p.token0().catch(() => null),
-      p.token1().catch(() => null),
-      p.getReserves().catch(() => null),
-    ]);
-    const t0 = sanitizeAddressResponse(t0Raw);
-    const t1 = sanitizeAddressResponse(t1Raw);
-    const reserves = sanitizeReserves(reservesRaw);
-    if (t0 && t1 && reserves) {
-      const [meta0, meta1] = await Promise.all([safeMeta(t0), safeMeta(t1)]);
-      absorbDiscoveredPair(
-        address,
-        { address: t0, symbol: meta0.symbol, decimals: meta0.decimals },
-        { address: t1, symbol: meta1.symbol, decimals: meta1.decimals },
-      );
+    const view = await getPool(address);
+    if (view) {
       status.textContent = "Found a pair.";
-      results.appendChild(pairResult(`${meta0.symbol} / ${meta1.symbol}`, address));
+      results.appendChild(pairResult(`${view.record.token0.symbol} / ${view.record.token1.symbol}`, view.record.pairAddress));
       return;
     }
   } catch {
@@ -130,7 +120,7 @@ async function probeAddress(query: string, results: HTMLElement, status: HTMLEle
   }
 
   // 4) Token probe + import.
-  const check = await checkImport(address);
+  const check = await probeToken(address);
   if (check.ok && check.token) {
     status.textContent = "Found a token.";
     const importBtn = el(
@@ -215,25 +205,17 @@ export async function searchPreview(rawQuery: string): Promise<SearchPreviewItem
     return [{ label: `${knownPair.token0.symbol} / ${knownPair.token1.symbol}`, detail: "Liquidity pair" }];
   }
 
-  // On-chain: pair probe first, then token probe.
+  if (!canRead()) return [];
+
+  // Pair probe first (Swap Read API, then chain), then token probe.
   try {
-    const p = pairContract(address);
-    const [t0Raw, t1Raw, reservesRaw] = await Promise.all([
-      p.token0().catch(() => null),
-      p.token1().catch(() => null),
-      p.getReserves().catch(() => null),
-    ]);
-    const t0 = sanitizeAddressResponse(t0Raw);
-    const t1 = sanitizeAddressResponse(t1Raw);
-    if (t0 && t1 && sanitizeReserves(reservesRaw)) {
-      const [meta0, meta1] = await Promise.all([safeMeta(t0), safeMeta(t1)]);
-      return [{ label: `${meta0.symbol} / ${meta1.symbol}`, detail: "Liquidity pair" }];
-    }
+    const view = await getPool(address);
+    if (view) return [{ label: `${view.record.token0.symbol} / ${view.record.token1.symbol}`, detail: "Liquidity pair" }];
   } catch {
     /* not a pair */
   }
   try {
-    const check = await checkImport(address);
+    const check = await probeToken(address);
     if (check.ok && check.token) return [{ label: check.token.symbol, detail: check.token.name }];
   } catch {
     /* not a token */
@@ -241,15 +223,16 @@ export async function searchPreview(rawQuery: string): Promise<SearchPreviewItem
   return [];
 }
 
-async function safeMeta(address: string): Promise<{ symbol: string; decimals: number }> {
-  const known = getAllTokens().find((t) => toPathAddress(t).toLowerCase() === address.toLowerCase());
-  if (known) return { symbol: known.symbol, decimals: known.decimals };
-  try {
-    const meta = await readTokenMetadata(address);
-    return { symbol: meta.symbol, decimals: meta.decimals };
-  } catch {
-    return { symbol: "TKN", decimals: 18 };
-  }
+/**
+ * Token probe for import: the on-chain check when a wallet is connected,
+ * else the Swap Read API's identity (only when it can name the token and its
+ * decimals are known).
+ */
+async function probeToken(address: string): Promise<ImportCheck> {
+  if (walletStore.get().status === "connected") return checkImport(address);
+  const meta: TokenMetadata | null = await tokenMetadataForImport(address);
+  if (!meta) return { ok: false, reason: "No token or pair found at that address. Connect your wallet to look it up on-chain." };
+  return { ok: true, token: meta };
 }
 
 function tokenResult(symbol: string, name: string, address: string): HTMLElement {

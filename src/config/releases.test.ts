@@ -220,6 +220,88 @@ describe("releases store", () => {
     expect(reloaded.releases).toHaveLength(1); // built-in only
   });
 
+  it("stores, persists and reloads an optional Swap Read API URL per custom release", async () => {
+    const { swapApiUrl } = await import("./releases");
+    const { SWAP_API_URL } = await import("./chain");
+    expect(swapApiUrl()).toBe(SWAP_API_URL); // built-in carries the default explicitly
+    const res = addCustomRelease("Devnet", WQ2, FAC2, ROUT2, " http://127.0.0.1:8182/ ");
+    expect(res.ok).toBe(true);
+    setDefault(res.id as string);
+    expect(currentRelease().apiUrl).toBe("http://127.0.0.1:8182");
+    expect(swapApiUrl()).toBe("http://127.0.0.1:8182");
+    const reloaded = loadReleases();
+    expect(reloaded.releases.find((r) => r.id === res.id)?.apiUrl).toBe("http://127.0.0.1:8182");
+  });
+
+  it("the built-in release carries the Beta 2 API URL + dexId; customs default to them when omitted", async () => {
+    const { swapApiConfiguredDexId, swapApiEnabled } = await import("./releases");
+    const { SWAP_API_DEX_ID, SWAP_API_URL } = await import("./chain");
+    expect(SWAP_API_DEX_ID).toBe("quantumswap-beta2");
+    expect(currentRelease().apiUrl).toBe(SWAP_API_URL);
+    expect(currentRelease().dexId).toBe(SWAP_API_DEX_ID);
+    expect(swapApiConfiguredDexId()).toBe("quantumswap-beta2");
+    expect(swapApiEnabled()).toBe(true);
+    const withId = addCustomRelease("Devnet", WQ2, FAC2, ROUT2, "http://127.0.0.1:8182", " quantumswap-beta2 ");
+    expect(withId.ok).toBe(true);
+    setDefault(withId.id as string);
+    expect(swapApiConfiguredDexId()).toBe("quantumswap-beta2");
+    expect(loadReleases().releases.find((r) => r.id === withId.id)?.dexId).toBe("quantumswap-beta2");
+    // Omitted (undefined) = the built-in defaults, stored explicitly on the release.
+    const noId = addCustomRelease("Other", WQ3, FAC3, ROUT3);
+    setDefault(noId.id as string);
+    expect(currentRelease().apiUrl).toBe(SWAP_API_URL);
+    expect(currentRelease().dexId).toBe(SWAP_API_DEX_ID);
+    expect(swapApiConfiguredDexId()).toBe(SWAP_API_DEX_ID);
+    expect(swapApiEnabled()).toBe(true);
+    const persisted = JSON.parse(localStorage.getItem("qs.releases.v1") as string) as { releases: { id: string; apiUrl: string; dexId: string }[] };
+    expect(persisted.releases.find((r) => r.id === noId.id)).toMatchObject({ apiUrl: SWAP_API_URL, dexId: SWAP_API_DEX_ID });
+    expect(addCustomRelease("Bad", WQ2, FAC2, ROUT2, "", "bad id!").ok).toBe(false);
+  });
+
+  it("an empty API URL or dexId turns the Swap Read API off for that release and survives reload", async () => {
+    const { swapApiConfiguredDexId, swapApiEnabled, swapApiUrl } = await import("./releases");
+    const noUrl = addCustomRelease("NoUrl", WQ2, FAC2, ROUT2, "  ", "quantumswap-beta2");
+    expect(noUrl.ok).toBe(true);
+    setDefault(noUrl.id as string);
+    expect(currentRelease().apiUrl).toBe("");
+    expect(swapApiUrl()).toBe("");
+    expect(swapApiEnabled()).toBe(false);
+    const noDex = addCustomRelease("NoDex", WQ3, FAC3, ROUT3, "http://127.0.0.1:8182", "");
+    expect(noDex.ok).toBe(true);
+    setDefault(noDex.id as string);
+    expect(currentRelease().dexId).toBe("");
+    expect(swapApiConfiguredDexId()).toBeNull();
+    expect(swapApiEnabled()).toBe(false);
+    // Persisted as explicit empty strings and reloaded as "off", not as the defaults.
+    const reloaded = loadReleases();
+    expect(reloaded.releases.find((r) => r.id === noUrl.id)).toMatchObject({ apiUrl: "", dexId: "quantumswap-beta2" });
+    expect(reloaded.releases.find((r) => r.id === noDex.id)).toMatchObject({ apiUrl: "http://127.0.0.1:8182", dexId: "" });
+  });
+
+  it("persisted releases without the API fields load with the defaults; invalid values fall back to them", async () => {
+    const { SWAP_API_DEX_ID, SWAP_API_URL } = await import("./chain");
+    expect(addCustomRelease("Bad", WQ2, FAC2, ROUT2, "javascript:alert(1)").ok).toBe(false);
+    try {
+      localStorage.setItem(
+        "qs.releases.v1",
+        JSON.stringify({
+          releases: [
+            // Saved before the fields existed: keeps the behaviour it had (the defaults).
+            { id: "custom-old", name: "Old", wq: WQ2, factory: FAC2, router: ROUT2 },
+            // Invalid values never drop the release, they fall back to the defaults.
+            { id: "custom-x", name: "X", wq: WQ3, factory: FAC3, router: ROUT3, apiUrl: "ftp://nope", dexId: "bad id!" },
+          ],
+          defaultId: "custom-x",
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+    const reloaded = loadReleases();
+    expect(reloaded.releases.find((r) => r.id === "custom-old")).toMatchObject({ apiUrl: SWAP_API_URL, dexId: SWAP_API_DEX_ID });
+    expect(reloaded.releases.find((r) => r.id === "custom-x")).toMatchObject({ apiUrl: SWAP_API_URL, dexId: SWAP_API_DEX_ID });
+  });
+
   it("built-ins win: a persisted custom colliding with a built-in id is dropped", () => {
     try {
       localStorage.setItem(

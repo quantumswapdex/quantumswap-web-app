@@ -46,7 +46,10 @@ const ROUTES: { name: string; path: string }[] = [
 ];
 
 // Benign browser messages unrelated to app health that we intentionally ignore.
-const IGNORED_CONSOLE = [/Content Security Policy directive 'frame-ancestors' is ignored/i];
+// "Failed to load resource" is Chromium's network log for a fetch the app
+// handles itself: the boot-time Swap Read API probe (unreachable here) falls
+// back to extension RPC; it is not an app error.
+const IGNORED_CONSOLE = [/Content Security Policy directive 'frame-ancestors' is ignored/i, /Failed to load resource/i];
 
 interface Fixtures {
   errors: string[];
