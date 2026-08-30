@@ -19,6 +19,8 @@ import {
 } from "../tokens/tokenList";
 import { importTokenByAddress } from "../tokens/addWarning";
 import { walletStore } from "../wallet/wallet";
+import { apiAvailable, listIndexedTokens, marketStore, type TokenFactsView } from "../lib/marketData";
+import { shortAddress } from "../lib/format";
 
 export function tokenExplorerView(): ViewResult {
   let query = "";
@@ -44,13 +46,49 @@ export function tokenExplorerView(): ViewResult {
 
   const createTokenBtn = el("a", { class: "btn btn-primary", href: "#/tokens/create" }, "Create token");
 
+  const indexedWrap = el("div", { class: "stack", style: { marginTop: "18px" } });
+  let indexedSeq = 0;
+
   const node = el(
     "div",
     { class: "page" },
     pageHeader("Token Explorer", "Default tokens plus any token you import by contract address."),
     el("div", { class: "toolbar" }, searchInput, importBtn, createTokenBtn),
     listWrap,
+    indexedWrap,
   );
+
+  /** Tokens indexed on the active DEX by the Swap Read API (hidden when unavailable). */
+  async function renderIndexed(): Promise<void> {
+    const seq = ++indexedSeq;
+    clear(indexedWrap);
+    if (!apiAvailable()) return;
+    const page = await listIndexedTokens(1);
+    if (seq !== indexedSeq || page.items.length === 0) return;
+    const known = new Set(getAllTokens().map((t) => t.address.toLowerCase()));
+    const rows = page.items.map((f: TokenFactsView) =>
+      el(
+        "div",
+        { class: "result-row" },
+        el(
+          "a",
+          { href: `#/explore/tokens/${f.address}` },
+          el("span", { class: "r-sym" }, f.identityKnown && f.symbol ? f.symbol : shortAddress(f.address)),
+          el("span", { class: "r-name" }, `${f.pairCount} pool${f.pairCount === 1 ? "" : "s"}${known.has(f.address.toLowerCase()) ? " · in your list" : ""}${f.feeOnTransfer ? " · fee on transfer" : ""}`),
+        ),
+        addressPill(f.address, { link: false }),
+      ),
+    );
+    indexedWrap.appendChild(
+      el(
+        "div",
+        { class: "panel" },
+        el("h3", { style: { margin: "0 0 8px" } }, `Indexed on this DEX (${page.totalItems})`),
+        el("p", { class: "muted", style: { fontSize: "13px", margin: "0 0 10px" } }, "Tokens with at least one pool on the active release, from the Swap Read API. Open a token to import it."),
+        el("div", { class: "stack", style: { gap: "8px" } }, ...rows),
+      ),
+    );
+  }
 
   function render(): void {
     clear(listWrap);
@@ -78,9 +116,14 @@ export function tokenExplorerView(): ViewResult {
     }
   }
 
-  const unsub = tokenStore.subscribe(() => render());
+  const unsub = tokenStore.subscribe(() => {
+    render();
+    void renderIndexed();
+  });
   const unsubWallet = walletStore.subscribe(() => render());
+  const unsubMarket = marketStore.subscribe(() => void renderIndexed());
   render();
+  void renderIndexed();
 
   return {
     node,
@@ -89,6 +132,7 @@ export function tokenExplorerView(): ViewResult {
     cleanup: () => {
       unsub();
       unsubWallet();
+      unsubMarket();
     },
   };
 }

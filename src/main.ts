@@ -22,7 +22,8 @@ import { initWallet, walletStore } from "./wallet/wallet";
 import { startWalletToasts } from "./wallet/walletToast";
 import { initPairRegistry, syncRegistryTokenRefs } from "./lib/pairRegistry";
 import { initTxHistory } from "./lib/txStore";
-import { refreshApprovedTokenMetadata } from "./tokens/tokenList";
+import { probeSwapApi, refreshApprovedTokenFacts } from "./lib/marketData";
+import { initImportedTokens, refreshApprovedTokenMetadata } from "./tokens/tokenList";
 import { initTheme } from "./theme/theme";
 
 import { swapView } from "./views/swap";
@@ -90,8 +91,11 @@ async function bootstrap(): Promise<void> {
   // Now that the SDK's address utils work, reload persisted custom releases
   // (they are dropped by the import-time load; see initReleases).
   initReleases();
+  initImportedTokens();
 
-  await initWallet();
+  // Detect the extension and probe the Swap Read API (market-data source;
+  // extension RPC is the fallback) in parallel; neither blocks the other.
+  await Promise.all([initWallet(), probeSwapApi()]);
 
   // Toast on extension-driven connect / disconnect / account changes.
   startWalletToasts();
@@ -107,9 +111,12 @@ async function bootstrap(): Promise<void> {
   initPairRegistry();
   initTxHistory();
 
-  // Non-blocking: override hardcoded approved-token metadata with the on-chain
-  // name/symbol/decimals, then bring registry snapshots in line.
-  void refreshApprovedTokenMetadata().then(() => syncRegistryTokenRefs());
+  // Non-blocking: override hardcoded approved-token metadata - first from the
+  // Swap Read API's token facts (no wallet needed), then from the chain when a
+  // wallet is connected (chain wins) - and bring registry snapshots in line.
+  void refreshApprovedTokenFacts()
+    .then(() => refreshApprovedTokenMetadata())
+    .then(() => syncRegistryTokenRefs());
 
   const { root: shell, outlet } = createAppShell();
   root.replaceChildren(shell);

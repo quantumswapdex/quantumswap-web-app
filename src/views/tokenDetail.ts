@@ -18,7 +18,9 @@ import {
 } from "../tokens/tokenList";
 import { confirmImportToken } from "../tokens/addWarning";
 import { getRegistry } from "../lib/pairRegistry";
+import { canRead, getPools, getTokenFacts, marketStore, tokenMetadataForImport, type TokenFactsView } from "../lib/marketData";
 import { walletStore } from "../wallet/wallet";
+import type { PairRecord } from "../config/pairs";
 
 export function tokenDetailView(ctx: RouteContext): ViewResult {
   const address = sanitizeAddress(ctx.params.address);
@@ -37,14 +39,26 @@ export function tokenDetailView(ctx: RouteContext): ViewResult {
   async function load(): Promise<void> {
     try {
       const known = findToken(address!);
-      const token: TokenInfo = known ?? (await toInfo(address!));
+      // Token facts (identity, pair count, fee-on-transfer evidence) come from
+      // the Swap Read API when available; unknown tokens fall back to RPC metadata.
+      const facts: TokenFactsView | null = canRead() ? await getTokenFacts(address!).catch(() => null) : null;
+      const token: TokenInfo = known ?? factsToInfo(address!, facts) ?? (await toInfo(address!));
+      const decimalsAssumed = !known && facts !== null && facts.decimals === null;
       const account = walletStore.get().account;
       let balance = 0n;
       if (account) balance = await readTokenBalance(token, account);
 
-      const pools = getRegistry().filter(
+      let pools: PairRecord[] = getRegistry().filter(
         (p) => p.token0.address.toLowerCase() === address!.toLowerCase() || p.token1.address.toLowerCase() === address!.toLowerCase(),
       );
+      if (canRead()) {
+        try {
+          const page = await getPools(1, "liquidity", address!);
+          if (page.source === "api") pools = page.items.map((v) => v.record);
+        } catch {
+          /* keep the registry view */
+        }
+      }
 
       clear(body);
       const recognized = isRecognizedAddress(address!);
@@ -64,7 +78,8 @@ export function tokenDetailView(ctx: RouteContext): ViewResult {
               "div",
               { class: "details" },
               statRow("Name", token.name),
-              statRow("Decimals", String(token.decimals)),
+              statRow("Decimals", decimalsAssumed ? `${token.decimals} (assumed; not decoded yet)` : String(token.decimals)),
+              facts?.feeOnTransfer ? statRow("Fee on transfer", "Observed on swaps into this DEX") : null,
               account ? statRow("Your balance", `${formatAmount(balance, token.decimals, 6)} ${token.symbol}`) : null,
               pools.length ? statRow("Pools", pools.map((p) => `${p.token0.symbol} / ${p.token1.symbol}`).join(", ")) : null,
             ),
@@ -108,25 +123,52 @@ export function tokenDetailView(ctx: RouteContext): ViewResult {
   }
 
   async function doImport(addr: string): Promise<void> {
-    const result = await checkImport(addr);
-    if (!result.ok || !result.token) {
-      showToast({ kind: "error", title: "Cannot import", message: result.reason, autoDismissMs: 6000 });
-      return;
+    let meta = null;
+    if (walletStore.get().status === "connected") {
+      const result = await checkImport(addr);
+      if (!result.ok || !result.token) {
+        showToast({ kind: "error", title: "Cannot import", message: result.reason, autoDismissMs: 6000 });
+        return;
+      }
+      meta = result.token;
+    } else {
+      meta = await tokenMetadataForImport(addr);
+      if (!meta) {
+        showToast({ kind: "error", title: "Cannot import", message: "Connect your wallet to read this token's details on-chain.", autoDismissMs: 6000 });
+        return;
+      }
     }
-    const ok = await confirmImportToken(result.token);
+    const ok = await confirmImportToken(meta);
     if (ok) {
-      importToken(result.token);
+      importToken(meta);
       void load();
     }
   }
 
   const unsub = walletStore.subscribe(() => void load());
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") void load();
+  });
   void load();
 
-  return { node: container, theme: "emerald", title: "Token detail", cleanup: () => unsub() };
+  return {
+    node: container,
+    theme: "emerald",
+    title: "Token detail",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
 }
 
 async function toInfo(address: string): Promise<TokenInfo> {
   const meta = await readTokenMetadata(address);
   return { address: meta.address, symbol: meta.symbol, name: meta.name, decimals: meta.decimals };
+}
+
+/** UI token from API facts; null when the explorer cannot name the token. */
+function factsToInfo(address: string, facts: TokenFactsView | null): TokenInfo | null {
+  if (!facts || !facts.identityKnown) return null;
+  return { address, symbol: facts.symbol || "TKN", name: facts.name || "Unknown Token", decimals: facts.decimals ?? 18 };
 }

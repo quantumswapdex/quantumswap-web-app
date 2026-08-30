@@ -11,9 +11,9 @@ import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import { type TokenInfo } from "../config/chain";
 import { routerAddress, wqAddress } from "../config/releases";
 import { PAIR_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
-import { findToken, readTokenMetadata, toPathAddress } from "../tokens/tokenList";
+import { findToken, toPathAddress } from "../tokens/tokenList";
 import { sanitizeAddress } from "../lib/sanitize";
-import { sanitizeAddressResponse, sanitizeReserves } from "../lib/sanitizeResponse";
+import { getPool, type PoolView } from "../lib/marketData";
 import { formatAmount } from "../lib/format";
 import { deadlineFrom, minWithSlippage } from "../lib/quoteMath";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
@@ -60,23 +60,15 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
       return;
     }
     try {
-      const p = pairContract(pairAddress!);
-      const [t0Raw, t1Raw, reservesRaw, totalSupplyRaw, balRaw] = await Promise.all([
-        p.token0(),
-        p.token1(),
-        p.getReserves(),
-        p.totalSupply(),
-        p.balanceOf(account),
-      ]);
-      const t0 = sanitizeAddressResponse(t0Raw);
-      const t1 = sanitizeAddressResponse(t1Raw);
-      const parsed = sanitizeReserves(reservesRaw);
-      if (!t0 || !t1 || !parsed) throw new Error("Could not read pair state");
-      tokenA = await resolveToken(t0);
-      tokenB = await resolveToken(t1);
-      reserveA = parsed.reserve0;
-      reserveB = parsed.reserve1;
-      totalSupply = typeof totalSupplyRaw === "bigint" ? totalSupplyRaw : BigInt(totalSupplyRaw ?? 0);
+      // Pool state: Swap Read API first, chain fallback. The LP balance is
+      // wallet state and is always read from the chain (the tx burns it).
+      const [view, balRaw] = await Promise.all([getPool(pairAddress!), pairContract(pairAddress!).balanceOf(account)]);
+      if (!view) throw new Error("No pool exists at this address on the active release.");
+      tokenA = resolveToken(view, 0);
+      tokenB = resolveToken(view, 1);
+      reserveA = view.reserve0;
+      reserveB = view.reserve1;
+      totalSupply = view.lpTotalSupply;
       lpBalance = typeof balRaw === "bigint" ? balRaw : BigInt(balRaw ?? 0);
       render();
     } catch (err) {
@@ -218,16 +210,14 @@ export function removeLiquidityView(ctx: RouteContext): ViewResult {
   return { node: container, theme: "nebula", title: "Remove liquidity", cleanup: () => unsub() };
 }
 
-async function resolveToken(address: string): Promise<TokenInfo> {
-  if (address.toLowerCase() === wqAddress().toLowerCase()) {
+function resolveToken(view: PoolView, side: 0 | 1): TokenInfo {
+  const ref = side === 0 ? view.record.token0 : view.record.token1;
+  const facts = side === 0 ? view.facts?.token0 : view.facts?.token1;
+  if (ref.address.toLowerCase() === wqAddress().toLowerCase()) {
     return findToken(wqAddress()) ?? { address: wqAddress(), symbol: "WQ", name: "Wrapped QuantumCoin", decimals: 18 };
   }
-  const known = findToken(address);
+  const known = findToken(ref.address);
   if (known) return known;
-  try {
-    const meta = await readTokenMetadata(address);
-    return { address: meta.address, symbol: meta.symbol, name: meta.name, decimals: meta.decimals };
-  } catch {
-    return { address, symbol: "TKN", name: "Unknown Token", decimals: 18 };
-  }
+  const name = facts?.identityKnown && facts.name ? facts.name : "Unknown Token";
+  return { address: ref.address, symbol: ref.symbol, name, decimals: ref.decimals };
 }

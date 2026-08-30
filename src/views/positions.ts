@@ -1,17 +1,17 @@
 /**
- * Liquidity Explorer / My Positions: LP balances across the registry with
- * underlying amounts and pool share, plus an optional deep scan.
+ * Liquidity Explorer / My Positions: LP balances with underlying amounts and
+ * pool share. Served by the Swap Read API (one request for every position on
+ * the active DEX, plus the pools the account created) with the registry
+ * balanceOf scan as the RPC fallback, and an optional deep scan.
  */
 
 import { clear, el } from "../ui/dom";
 import type { ViewResult } from "../ui/router";
 import { card, emptyState, errText, loadingState, pageHeader, statRow } from "./shared";
 import { addressPill } from "../ui/components/addressPill";
-import { pair as pairContract } from "../lib/contracts";
-import { discoverAllFromFactory, discoverKnownPairs, registryStore } from "../lib/pairRegistry";
 import type { PairRecord } from "../config/pairs";
-import { sanitizeReserves } from "../lib/sanitizeResponse";
 import { formatAmount } from "../lib/format";
+import { discoverAllFromFactory, getPairsCreated, getPositions, marketStore, type PositionView } from "../lib/marketData";
 import { connectWallet, walletStore } from "../wallet/wallet";
 
 interface Position {
@@ -24,7 +24,9 @@ interface Position {
 
 export function positionsView(): ViewResult {
   const body = el("div", { class: "stack" });
+  const createdWrap = el("div", { class: "stack" });
   const statusEl = el("span", { class: "ts" });
+  let scanSeq = 0;
 
   const deepScanBtn = el(
     "button",
@@ -35,13 +37,16 @@ export function positionsView(): ViewResult {
   const node = el(
     "div",
     { class: "page" },
-    pageHeader("My Positions", "Your liquidity across known QuantumSwap pairs."),
+    pageHeader("My Positions", "Your liquidity across QuantumSwap pools."),
     el("div", { class: "toolbar" }, statusEl, deepScanBtn),
     body,
+    createdWrap,
   );
 
   async function scan(): Promise<void> {
+    const seq = ++scanSeq;
     const account = walletStore.get().account;
+    clear(createdWrap);
     if (!account) {
       clear(body);
       body.appendChild(
@@ -55,47 +60,72 @@ export function positionsView(): ViewResult {
 
     clear(body);
     body.appendChild(loadingState("Scanning your positions..."));
+    let result: { items: PositionView[]; capped: boolean; source: "api" | "rpc" };
     try {
-      await discoverKnownPairs();
-    } catch {
-      /* continue with whatever is in the registry */
+      result = await getPositions(account);
+    } catch (err) {
+      if (seq !== scanSeq) return;
+      clear(body);
+      body.appendChild(emptyState(errText(err), el("button", { class: "btn btn-primary", on: { click: () => void connectWallet() } }, "Connect wallet")));
+      return;
     }
+    if (seq !== scanSeq) return;
 
-    const positions: Position[] = [];
-    for (const record of registryStore.get()) {
-      try {
-        const p = pairContract(record.pairAddress);
-        const balRaw = await p.balanceOf(account);
-        const lpBalance = typeof balRaw === "bigint" ? balRaw : BigInt(balRaw ?? 0);
-        if (lpBalance <= 0n) continue;
-        const [reservesRaw, totalSupplyRaw] = await Promise.all([p.getReserves(), p.totalSupply()]);
-        const reserves = sanitizeReserves(reservesRaw);
-        const totalSupply = typeof totalSupplyRaw === "bigint" ? totalSupplyRaw : BigInt(totalSupplyRaw ?? 0);
-        if (!reserves || totalSupply <= 0n) continue;
-        positions.push({
-          record,
-          lpBalance,
-          amount0: (lpBalance * reserves.reserve0) / totalSupply,
-          amount1: (lpBalance * reserves.reserve1) / totalSupply,
-          share: Number(lpBalance) / Number(totalSupply),
-        });
-      } catch {
-        /* skip unreadable pair */
-      }
-    }
+    const positions: Position[] = result.items
+      .filter((p) => p.totalSupply > 0n)
+      .map((p) => ({
+        record: p.record,
+        lpBalance: p.lpBalance,
+        amount0: (p.lpBalance * p.reserve0) / p.totalSupply,
+        amount1: (p.lpBalance * p.reserve1) / p.totalSupply,
+        share: Number(p.lpBalance) / Number(p.totalSupply),
+      }));
 
     clear(body);
+    const m = marketStore.get();
+    statusEl.textContent = result.source === "api" && m.indexedBlock !== null ? `Indexed at block ${m.indexedBlock}` : "";
     if (positions.length === 0) {
       body.appendChild(
         emptyState(
-          "No liquidity positions found in the known registry. If you provided liquidity to a pair not listed here, try a deep scan.",
+          result.source === "api"
+            ? "No liquidity positions found for this account on the active release."
+            : "No liquidity positions found in the known registry. If you provided liquidity to a pair not listed here, try a deep scan.",
           el("a", { class: "btn btn-primary", href: "#/pools/add" }, "Add liquidity"),
         ),
       );
-      return;
+    } else {
+      for (const pos of positions) body.appendChild(positionCard(pos));
+      if (result.capped) body.appendChild(el("p", { class: "ts" }, "Showing the first 1000 positions tracked for this account."));
     }
 
-    for (const pos of positions) body.appendChild(positionCard(pos));
+    // Pools this account created (API only; hidden when unavailable/empty).
+    if (result.source === "api") {
+      const created = await getPairsCreated(account, 1);
+      if (seq !== scanSeq) return;
+      if (created.items.length > 0) {
+        createdWrap.appendChild(
+          card(
+            el("h3", {}, `Pools you created (${created.totalItems})`),
+            el(
+              "div",
+              { class: "stack", style: { gap: "8px" } },
+              ...created.items.map((v) =>
+                el(
+                  "div",
+                  { class: "result-row" },
+                  el(
+                    "a",
+                    { href: `#/explore/pools/${v.record.pairAddress}` },
+                    el("span", { class: "r-sym" }, `${v.record.token0.symbol} / ${v.record.token1.symbol}`),
+                  ),
+                  addressPill(v.record.pairAddress, { link: false }),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   function positionCard(pos: Position): HTMLElement {
@@ -131,11 +161,10 @@ export function positionsView(): ViewResult {
       return;
     }
     deepScanBtn.setAttribute("disabled", "");
-    statusEl.textContent = "Walking the factory for all pairs...";
+    statusEl.textContent = "Loading all pairs...";
     try {
       await discoverAllFromFactory();
       await scan();
-      statusEl.textContent = "";
     } catch (err) {
       statusEl.textContent = errText(err);
     }
@@ -143,7 +172,18 @@ export function positionsView(): ViewResult {
   }
 
   const unsub = walletStore.subscribe(() => void scan());
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") void scan();
+  });
   void scan();
 
-  return { node, theme: "nebula", title: "My Positions", cleanup: () => unsub() };
+  return {
+    node,
+    theme: "nebula",
+    title: "My Positions",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
 }

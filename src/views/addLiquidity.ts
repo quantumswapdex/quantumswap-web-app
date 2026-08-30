@@ -14,18 +14,17 @@ import { trackTxToast } from "../ui/components/txToast";
 import { openTxStepsDialog, type TxStep } from "../ui/components/txSteps";
 import { DEFAULT_PAIR_TOKEN_A, DEFAULT_PAIR_TOKEN_B, NATIVE_TOKEN, type TokenInfo } from "../config/chain";
 import { routerAddress } from "../config/releases";
-import { ERC20_ABI, ROUTER_ABI, encodeRouter, pair as pairContract } from "../lib/contracts";
+import { ERC20_ABI, ROUTER_ABI, encodeRouter } from "../lib/contracts";
 import { findToken, toPathAddress } from "../tokens/tokenList";
 import { parseAmount, sanitizeAddress } from "../lib/sanitize";
 import { formatAmount, formatPercent } from "../lib/format";
 import { deadlineFrom, minWithSlippage, quote } from "../lib/quoteMath";
-import { sanitizeReserves, sanitizeAddressResponse } from "../lib/sanitizeResponse";
 import { getLatestBlockTimestamp } from "../lib/extensionProvider";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { onTxSettled, recordTx } from "../lib/txStore";
 import { settingsStore } from "../config/settings";
 import { connectWallet, walletStore } from "../wallet/wallet";
-import { resolvePairAddress } from "../lib/pairRegistry";
+import { canRead, lookupPair, marketStore } from "../lib/marketData";
 
 export function addLiquidityView(ctx: RouteContext): ViewResult {
   let tokenA: TokenInfo = resolveParam(ctx.params.tokenA) ?? DEFAULT_PAIR_TOKEN_A;
@@ -96,29 +95,22 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
     totalSupply = 0n;
     clear(noticeBox);
     clear(detailBox);
-    if (walletStore.get().status !== "connected") {
+    // Pool state comes from the Swap Read API when available, else the chain
+    // (which needs a connected wallet). Without either, only the connect CTA shows.
+    if (!canRead()) {
       renderAction();
       return;
     }
     try {
-      pairAddress = await resolvePairAddress(tokenA, tokenB);
+      const lookup = await lookupPair(tokenA, tokenB);
+      pairAddress = lookup.pairAddress;
       if (pairAddress) {
-        const p = pairContract(pairAddress);
-        const [reservesRaw, token0Raw, totalSupplyRaw] = await Promise.all([
-          p.getReserves(),
-          p.token0(),
-          p.totalSupply(),
-        ]);
-        const parsed = sanitizeReserves(reservesRaw);
-        const token0 = sanitizeAddressResponse(token0Raw);
-        totalSupply = typeof totalSupplyRaw === "bigint" ? totalSupplyRaw : BigInt(totalSupplyRaw ?? 0);
-        if (parsed && token0) {
-          const aIsToken0 = toPathAddress(tokenA).toLowerCase() === token0.toLowerCase();
-          reserves = aIsToken0
-            ? { reserveA: parsed.reserve0, reserveB: parsed.reserve1 }
-            : { reserveA: parsed.reserve1, reserveB: parsed.reserve0 };
-          if (reserves.reserveA === 0n && reserves.reserveB === 0n) reserves = null;
-        }
+        totalSupply = lookup.lpTotalSupply;
+        const aIsToken0 = toPathAddress(tokenA).toLowerCase() === lookup.token0.toLowerCase();
+        reserves = aIsToken0
+          ? { reserveA: lookup.reserve0, reserveB: lookup.reserve1 }
+          : { reserveA: lookup.reserve1, reserveB: lookup.reserve0 };
+        if (reserves.reserveA === 0n && reserves.reserveB === 0n) reserves = null;
       }
     } catch {
       /* treat as new pair */
@@ -288,12 +280,23 @@ export function addLiquidityView(ctx: RouteContext): ViewResult {
   const unsub = walletStore.subscribe(() => {
     inputA.refreshBalance();
     inputB.refreshBalance();
-    renderAction();
+    void loadPair();
+  });
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") void loadPair();
   });
 
   void loadPair();
 
-  return { node, theme: "nebula", title: "Add liquidity", cleanup: () => unsub() };
+  return {
+    node,
+    theme: "nebula",
+    title: "Add liquidity",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
 }
 
 function resolveParam(param?: string): TokenInfo | null {

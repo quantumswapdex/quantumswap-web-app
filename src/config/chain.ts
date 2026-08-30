@@ -9,8 +9,32 @@
 export const CHAIN_ID = 123123;
 export const NETWORK_NAME = "MAINNET";
 
-/** Block explorer (used only to build outbound links; never fetched by this app). */
+/**
+ * Network endpoints.
+ *
+ * - RPC: chain transport is the browser extension (`src/lib/extensionProvider.ts`);
+ *   the RPC URL handed to the SDK `Config` in `src/main.ts` is configuration only.
+ * - Block explorer: used only to build outbound links; never fetched by this app.
+ * - Swap Read API: the only HTTP endpoint this app fetches. A read-only index of
+ *   pools, reserves, routes, token facts and LP positions served per DEX
+ *   (`src/lib/swapApi.ts`). `SWAP_API_URL` is the built-in release's endpoint
+ *   and the add-release form's default; every release carries its own
+ *   (`Release.apiUrl`), and an empty one means "extension RPC only". Every
+ *   read also falls back to the extension RPC when the API is unavailable
+ *   (`src/lib/marketData.ts`). Its origin must be allow-listed in the CSP
+ *   `connect-src` in `index.html`.
+ */
 export const BLOCK_EXPLORER = "https://quantumscan.com";
+export const SWAP_API_URL = "https://api.quantumswap.com";
+/**
+ * dexId of the Beta 2 deployment on the Swap Read API (the API indexes several
+ * DEX deployments; every scoped call is /swap/v1/{dexId}/...). The built-in
+ * release's value and the add-release form's default; every release carries
+ * its own (`Release.dexId`), and an empty one means "extension RPC only". The
+ * market layer only uses a dexId whose factory on the API is the release's
+ * factory.
+ */
+export const SWAP_API_DEX_ID = "quantumswap-beta2";
 
 /** Where to send users who do not have the QuantumSwap browser extension. */
 export const EXTENSION_INSTALL_URL =

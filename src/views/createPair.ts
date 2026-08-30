@@ -14,7 +14,7 @@ import { sanitizeAddress } from "../lib/sanitize";
 import { sendTx, waitForReceiptSuccess } from "../lib/tx";
 import { recordTx } from "../lib/txStore";
 import { connectWallet, walletStore } from "../wallet/wallet";
-import { resolvePairAddress } from "../lib/pairRegistry";
+import { canRead, marketStore, resolvePairAddress } from "../lib/marketData";
 
 export function createPairView(ctx: RouteContext): ViewResult {
   let tokenA: TokenInfo | null = resolveParam(ctx.params.tokenA) ?? DEFAULT_PAIR_TOKEN_A;
@@ -55,23 +55,27 @@ export function createPairView(ctx: RouteContext): ViewResult {
     clear(actionBox);
     clear(status);
 
-    if (walletStore.get().status !== "connected") {
+    const connected = walletStore.get().status === "connected";
+    if (!connected) {
       actionBox.appendChild(el("button", { class: "cta", on: { click: () => void connectWallet() } }, "Connect wallet"));
-      return;
     }
     if (!tokenA || !tokenB || tokenA.address === tokenB.address) {
       status.textContent = "Select two different tokens.";
       return;
     }
 
-    const create = el(
-      "button",
-      { class: "cta", disabled: submitting ? true : undefined, on: { click: () => void doCreate() } },
-      "Create pair",
-    );
-    actionBox.appendChild(create);
+    let create: HTMLElement | null = null;
+    if (connected) {
+      create = el(
+        "button",
+        { class: "cta", disabled: submitting ? true : undefined, on: { click: () => void doCreate() } },
+        "Create pair",
+      );
+      actionBox.appendChild(create);
+    }
 
-    // Warn if it already exists.
+    // Warn if it already exists (Swap Read API first, chain fallback).
+    if (!canRead()) return;
     try {
       const existing = await resolvePairAddress(tokenA, tokenB);
       if (existing) {
@@ -90,7 +94,7 @@ export function createPairView(ctx: RouteContext): ViewResult {
             ),
           ),
         );
-        create.setAttribute("disabled", "");
+        create?.setAttribute("disabled", "");
       }
     } catch {
       /* ignore */
@@ -137,9 +141,20 @@ export function createPairView(ctx: RouteContext): ViewResult {
   }
 
   const unsub = walletStore.subscribe(() => void render());
+  const unsubMarket = marketStore.subscribe((s) => {
+    if (s.status === "ok" || s.status === "unavailable") void render();
+  });
   void render();
 
-  return { node, theme: "nebula", title: "Create a pair", cleanup: () => unsub() };
+  return {
+    node,
+    theme: "nebula",
+    title: "Create a pair",
+    cleanup: () => {
+      unsub();
+      unsubMarket();
+    },
+  };
 }
 
 function resolveParam(param?: string): TokenInfo | null {

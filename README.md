@@ -107,8 +107,27 @@ npm run dev
 ```
 
 Then open the printed URL (default <http://localhost:5173>) in a browser that has the
-QuantumSwap extension installed. Connect your wallet when prompted to enable on-chain
-reads and transactions.
+QuantumSwap extension installed. Market data (pools, reserves, routes, token facts, LP
+positions) is read from the **Swap Read API** (`SWAP_API_URL` in `src/config/chain.ts`,
+`https://api.quantumswap.com`; the built-in release uses dexId `SWAP_API_DEX_ID`,
+`quantumswap-beta2`) as soon as the extension is detected; connecting your wallet
+enables balances, router quotes and transactions. When the API is unreachable, lagging, or
+does not index the active release, every read falls back to the extension RPC exactly as
+before (the active release's card on the **Releases** page shows the live API status).
+
+### Running against a local devnet
+
+With the quantumscan devnet stack running (node RPC `:8545`, read API `:8181`, Swap Read API
+`:8182`, see `quantumscan/tools/devnet-api-e2e`), open **Releases → Add custom release** and
+enter the devnet WQ / factory / router addresses, then replace the prefilled Swap Read API URL
+with `http://127.0.0.1:8182` (the dexId stays `quantumswap-beta2`) and **Make default**. Every
+release carries its own API URL and dexId (prefilled with the built-in defaults); clearing
+either turns the Swap Read API off for that release so every read uses the extension RPC.
+The API is only used when it serves that dexId *for the release's factory* (otherwise the
+release card reports it as not served), so the default dexId can never show another
+deployment's pools. The release card shows `Swap Read API: indexed N pools`, and every page reads from the
+local index (the loopback origin is already allow-listed in the CSP). To refresh the recorded
+API fixtures used by the unit tests: `npm run fixtures:record`.
 
 ## Building for Production
 
@@ -137,7 +156,14 @@ npm run lint          # ESLint (fails on any warning)
 npm run check:naming  # CI guard: no banned references or unsafe HTML sinks
 npm run test:e2e:install # one-time: download the Playwright browser
 npm run test:e2e      # Playwright: build + preview + navigate every page
+npm run test:e2e:devnet  # Playwright against the LOCAL devnet Swap Read API (skips when it is down)
+npm run fixtures:record  # re-record src/lib/__fixtures__/swapApi/*.json from the devnet API
 ```
+
+The devnet end-to-end specs (`e2e/devnet*.spec.ts`) seed the devnet release into
+`localStorage`, browse every page through the local Swap Read API with and without a
+connected (stubbed) wallet, assert that all ten API operations were requested, and then
+abort / 500 every API request to prove the extension-RPC fallback still renders every view.
 
 Unit tests (Vitest) cover the pure logic: stablecoin filtering, address/amount
 sanitization, slippage/deadline/quote math, formatting, and pair-registry
@@ -209,8 +235,14 @@ Defense-in-depth is built in:
   SDK; control, zero-width, and bidirectional characters are stripped.
 - **Response sanitization** — untrusted RPC responses are type-checked, bounded, and
   normalized; token names/symbols are truncated and always rendered as text.
-- **Strict Content-Security-Policy** — same-origin assets only; `object-src 'none'`,
-  `connect-src 'self'`.
+- **Strict Content-Security-Policy** — same-origin assets only; `object-src 'none'`;
+  `connect-src` allows `'self'`, the Swap Read API origin (`https://api.quantumswap.com`,
+  the only endpoint the page fetches) and the loopback devnet listener
+  (`http://127.0.0.1:8182`, `http://localhost:8182`) used for local testing. A custom
+  release pointing at any other origin is blocked by the browser and the app falls back to
+  extension RPC. API responses go through the same response sanitizers as RPC responses
+  (`src/lib/swapApi.ts`), are never used for amount math when decimals are unknown, and the
+  API is never sent cookies or credentials.
 - **Self-custodial by design** — the app holds no keys; every transaction is signed
   in the QuantumSwap extension.
 

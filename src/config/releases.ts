@@ -11,8 +11,8 @@
  */
 
 import { createStore } from "../ui/store";
-import { sanitizeAddress } from "../lib/sanitize";
-import { FACTORY_ADDRESS, ROUTER_ADDRESS, WQ_ADDRESS, type TokenInfo } from "./chain";
+import { sanitizeAddress, sanitizeDexId, sanitizeUrl } from "../lib/sanitize";
+import { FACTORY_ADDRESS, ROUTER_ADDRESS, SWAP_API_DEX_ID, SWAP_API_URL, WQ_ADDRESS, type TokenInfo } from "./chain";
 import { registryStore } from "../lib/pairRegistry";
 
 export interface Release {
@@ -21,6 +21,21 @@ export interface Release {
   wq: string;
   factory: string;
   router: string;
+  /**
+   * Swap Read API base URL for this deployment. The built-in release and the
+   * add-release form default to `SWAP_API_URL`; a custom release (e.g. a
+   * devnet) can point at its own read index. Empty string = the Swap Read API
+   * is off for this release and every market read uses the extension RPC.
+   */
+  apiUrl: string;
+  /**
+   * dexId of this deployment on the Swap Read API (every scoped call is
+   * /swap/v1/{dexId}/...). Defaults to `SWAP_API_DEX_ID`. Empty string = the
+   * Swap Read API is off for this release (extension RPC only). The market
+   * layer also checks that the API's factory for this dexId matches the
+   * release's factory before using it (`src/lib/marketData.ts`).
+   */
+  dexId: string;
   /** Built-ins ship in code and cannot be removed or edited. */
   builtin: boolean;
 }
@@ -47,6 +62,8 @@ export const BUILTIN_RELEASES: Release[] = [
     wq: WQ_ADDRESS,
     factory: FACTORY_ADDRESS,
     router: ROUTER_ADDRESS,
+    apiUrl: SWAP_API_URL,
+    dexId: SWAP_API_DEX_ID,
     builtin: true,
   },
 ];
@@ -55,6 +72,19 @@ export const BUILTIN_RELEASES: Release[] = [
 interface PersistedState {
   releases: Omit<Release, "builtin">[];
   defaultId: string;
+}
+
+/** Callbacks run after the active release changes (caches are invalidated). */
+const refreshListeners = new Set<() => void>();
+
+/**
+ * Register a hook that runs whenever the active release changes (setDefault /
+ * removeCustom of the active release). Used by the market-data layer to
+ * re-probe the Swap Read API without this module importing it.
+ */
+export function onReleaseRefresh(fn: () => void): () => void {
+  refreshListeners.add(fn);
+  return () => refreshListeners.delete(fn);
 }
 
 /** Re-derive the full release state from code + localStorage. Exported for tests. */
@@ -78,6 +108,8 @@ export function loadReleases(): ReleaseState {
           wq,
           factory,
           router,
+          apiUrl: resolvePersistedField(entry.apiUrl, sanitizeUrl, SWAP_API_URL),
+          dexId: resolvePersistedField(entry.dexId, sanitizeDexId, SWAP_API_DEX_ID),
           builtin: false,
         });
       }
@@ -93,6 +125,19 @@ export function loadReleases(): ReleaseState {
       ? persistedDefault
       : BUILTIN_RELEASES[0].id;
   return { releases, defaultId };
+}
+
+/**
+ * Resolve a persisted Swap Read API field (apiUrl / dexId) without dropping the
+ * release: a missing key means the release was saved before the field existed
+ * and keeps the behaviour it had (the default); an explicitly empty value is
+ * the user's "off" choice and stays empty; a present-but-invalid value falls
+ * back to the default.
+ */
+function resolvePersistedField(raw: unknown, sanitize: (v: unknown) => string | null, fallback: string): string {
+  if (raw === undefined || raw === null) return fallback;
+  if (typeof raw === "string" && raw.trim() === "") return "";
+  return sanitize(raw) ?? fallback;
 }
 
 function tryParseDefault(): string | null {
@@ -125,7 +170,7 @@ releaseStore.subscribe((state) => {
     const persisted: PersistedState = {
       releases: state.releases
         .filter((r) => !r.builtin)
-        .map(({ id, name, wq, factory, router }) => ({ id, name, wq, factory, router })),
+        .map(({ id, name, wq, factory, router, apiUrl, dexId }) => ({ id, name, wq, factory, router, apiUrl, dexId })),
       defaultId: state.defaultId,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -156,6 +201,31 @@ export function routerAddress(): string {
 }
 
 /**
+ * Active release's Swap Read API base URL (call-time). Empty when the Swap
+ * Read API is off for this release; check `swapApiEnabled()` before use.
+ */
+export function swapApiUrl(): string {
+  return currentRelease().apiUrl;
+}
+
+/**
+ * Active release's Swap Read API dexId (call-time), or null when the release
+ * has it empty (Swap Read API off).
+ */
+export function swapApiConfiguredDexId(): string | null {
+  return currentRelease().dexId || null;
+}
+
+/**
+ * True when the active release has both a Swap Read API URL and a dexId. When
+ * false every market read goes to the extension RPC (`src/lib/marketData.ts`).
+ */
+export function swapApiEnabled(): boolean {
+  const rel = currentRelease();
+  return rel.apiUrl !== "" && rel.dexId !== "";
+}
+
+/**
  * The active release's wrapped-Q as a UI token (call-time). Mirrors the shape of
  * `WQ_TOKEN` in `./chain.ts` but resolves to the active release's WQ address, so
  * wrap/unwrap detection and the default "To" token stay correct under a custom
@@ -176,8 +246,16 @@ export interface AddResult {
   id?: string;
 }
 
-/** Validate + append a custom release. Returns the new id on success. */
-export function addCustomRelease(name: string, wq: string, factory: string, router: string): AddResult {
+/**
+ * Validate + append a custom release. Returns the new id on success.
+ *
+ * `apiUrl` / `dexId`: omitted (undefined) = the built-in defaults
+ * (`SWAP_API_URL` / `SWAP_API_DEX_ID`); an empty string = the user cleared the
+ * field, so the Swap Read API is off for this release (extension RPC only);
+ * a non-empty value must be an http(s) base URL (see sanitizeUrl) / a valid
+ * dexId (see sanitizeDexId).
+ */
+export function addCustomRelease(name: string, wq: string, factory: string, router: string, apiUrl?: string, dexId?: string): AddResult {
   const trimmedName = (name ?? "").trim();
   if (!trimmedName) return { ok: false, error: "Enter a name for the release." };
   if (trimmedName.length > 60) return { ok: false, error: "Release name is too long (max 60 characters)." };
@@ -188,11 +266,27 @@ export function addCustomRelease(name: string, wq: string, factory: string, rout
   if (!wqAddr) return { ok: false, error: "WQ address is not a valid 32-byte address." };
   if (!factoryAddr) return { ok: false, error: "Factory address is not a valid 32-byte address." };
   if (!routerAddr) return { ok: false, error: "Router address is not a valid 32-byte address." };
+  const trimmedUrl = apiUrl === undefined ? SWAP_API_URL : apiUrl.trim();
+  const safeUrl = trimmedUrl ? sanitizeUrl(trimmedUrl) : "";
+  if (safeUrl === null) return { ok: false, error: "Swap Read API URL must be an http(s) URL without credentials or query." };
+  const trimmedDexId = dexId === undefined ? SWAP_API_DEX_ID : dexId.trim();
+  const safeDexId = trimmedDexId ? sanitizeDexId(trimmedDexId) : "";
+  if (safeDexId === null) return { ok: false, error: "Swap Read API dexId may only contain letters, digits, - and _ (max 64)." };
 
   const id = uniqueCustomId();
+  const release: Release = {
+    id,
+    name: trimmedName,
+    wq: wqAddr,
+    factory: factoryAddr,
+    router: routerAddr,
+    apiUrl: safeUrl,
+    dexId: safeDexId,
+    builtin: false,
+  };
   releaseStore.update((prev) => ({
     ...prev,
-    releases: [...prev.releases, { id, name: trimmedName, wq: wqAddr, factory: factoryAddr, router: routerAddr, builtin: false }],
+    releases: [...prev.releases, release],
   }));
   return { ok: true, id };
 }
@@ -230,6 +324,13 @@ function applyRefreshSideEffects(): void {
     localStorage.removeItem("qs.discovered-pairs.v1");
   } catch {
     /* ignore */
+  }
+  for (const fn of [...refreshListeners]) {
+    try {
+      fn();
+    } catch {
+      /* a listener must never break the switch */
+    }
   }
   // Re-render the current route without a full page reload. The router listens
   // on `hashchange` and re-renders into the outlet; location.hash is unchanged.

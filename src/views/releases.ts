@@ -14,6 +14,11 @@ import {
   setDefault,
   type Release,
 } from "../config/releases";
+import { SWAP_API_DEX_ID, SWAP_API_URL } from "../config/chain";
+import { getDexStatus, marketStore } from "../lib/marketData";
+
+/** Card text for an empty Swap Read API URL / dexId. */
+const API_OFF_TEXT = "Off (using extension RPC)";
 
 export function releasesView(): ViewResult {
   const listWrap = el("div", { class: "stack" });
@@ -59,6 +64,24 @@ export function releasesView(): ViewResult {
       );
     }
 
+    // Live Swap Read API line for the active release (API-first market data).
+    const apiLine = el("div", { class: "ts", style: { marginTop: "6px" } }, isActive ? "Checking the Swap Read API..." : "");
+    if (isActive) {
+      void getDexStatus().then((s) => {
+        if (s) {
+          apiLine.textContent = `Swap Read API: indexed ${s.pairs} pools \u00b7 ${s.tokens} tokens \u00b7 block ${s.indexedBlock}${s.lagBlocks > 0 ? ` (${s.lagBlocks} behind)` : ""}`;
+          return;
+        }
+        const status = marketStore.get().status;
+        apiLine.textContent =
+          status === "disabled"
+            ? "Swap Read API: off for this release (using extension RPC)."
+            : status === "no-dex"
+              ? "Swap Read API: this dexId is not served for this factory (using extension RPC)."
+              : "Swap Read API unavailable (using extension RPC).";
+      });
+    }
+
     return card(
       el(
         "div",
@@ -73,6 +96,9 @@ export function releasesView(): ViewResult {
       addr("Wrapped Q (WQ)", rel.wq),
       addr("Factory", rel.factory),
       addr("Router", rel.router),
+      addr("Swap Read API", rel.apiUrl || API_OFF_TEXT),
+      addr("Swap Read API dexId", rel.dexId || API_OFF_TEXT),
+      apiLine,
       el("div", { style: { marginTop: "10px" } }, actions),
     );
   }
@@ -83,6 +109,14 @@ export function releasesView(): ViewResult {
     const wqInput = formInput("WQ address (0x...)", true);
     const factoryInput = formInput("Factory address (0x...)", true);
     const routerInput = formInput("Router address (0x...)", true);
+    // Prefilled with the built-in defaults; clearing either field turns the
+    // Swap Read API off for the new release (extension RPC only).
+    const apiUrlInput = formInput("Swap Read API URL (empty = extension RPC only)", false);
+    apiUrlInput.setAttribute("maxlength", "200");
+    apiUrlInput.value = SWAP_API_URL;
+    const dexIdInput = formInput("Swap Read API dexId (empty = extension RPC only)", false);
+    dexIdInput.setAttribute("maxlength", "64");
+    dexIdInput.value = SWAP_API_DEX_ID;
 
     const addBtn = el("button", { class: "btn btn-primary", on: { click: () => submit() } }, "Add release");
     const actionRow = el("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "14px" } }, addBtn);
@@ -93,12 +127,14 @@ export function releasesView(): ViewResult {
       el(
         "p",
         { class: "muted", style: { fontSize: "13px", lineHeight: "1.55", margin: "0 0 12px" } },
-        "Point the app at a different deployment by entering its core contract addresses. The release is stored in your browser only.",
+        "Point the app at a different deployment by entering its core contract addresses. The Swap Read API URL and dexId are prefilled with the built-in defaults; clear either to read this release from the extension RPC only. The release is stored in your browser only.",
       ),
       field("Name", nameInput),
       field("WQ address", wqInput),
       field("Factory address", factoryInput),
       field("Router address", routerInput),
+      field("Swap Read API URL", apiUrlInput),
+      field("Swap Read API dexId", dexIdInput),
       actionRow,
     );
 
@@ -108,7 +144,7 @@ export function releasesView(): ViewResult {
     nameInput.focus();
 
     function submit(): void {
-      const res = addCustomRelease(nameInput.value, wqInput.value, factoryInput.value, routerInput.value);
+      const res = addCustomRelease(nameInput.value, wqInput.value, factoryInput.value, routerInput.value, apiUrlInput.value, dexIdInput.value);
       if (!res.ok) {
         openErrorModal(res.error ?? "Could not add the release.");
         return;

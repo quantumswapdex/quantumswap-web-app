@@ -1,0 +1,20 @@
+{
+  "dexId": "quantumswap-beta2",
+  "name": "QuantumSwap Beta 2",
+  "factoryAddress": "0x4936ede416c82663adcb898d68ad12aad0131b0e19ae876b35e7b0d25ad7a319",
+  "routerAddress": "0x957320a8b1a3ca3fdd4ac3ab7191060cc315dff08de367f7e2962296c8aae7a4",
+  "wrappedCoinAddress": "0x761e72c47866b7ef2358d6c9770a49db7c9c4c7e23949d556f1ce798ff8e2f6e",
+  "feeBps": 30,
+  "routeDefaultPaths": 3,
+  "indexedBlock": 112181,
+  "primordialHead": 112181,
+  "lagBlocks": 0,
+  "degraded": false,
+  "pairs": 75,
+  "activePairs": 75,
+  "tokens": 72,
+  "lastTokenBlock": 6507,
+  "tokensUnresolved": 0,
+  "routeEntries": 1,
+  "routeVersion": 0
+}

@@ -67,6 +67,17 @@ function persist(list: ImportedToken[]): void {
 
 tokenStore.subscribe(persist);
 
+/**
+ * Re-derive imported tokens from localStorage once the SDK is ready. Like
+ * `initReleases`, the import-time `loadImported()` runs before bootstrap
+ * awaits `Initialize()`, when `sanitizeAddress` rejects every address, so the
+ * persisted imports would otherwise be dropped (and overwritten on the next
+ * store update). Bootstrap must call this after `Initialize()`.
+ */
+export function initImportedTokens(): void {
+  tokenStore.set(loadImported());
+}
+
 function dedupe(list: ImportedToken[]): ImportedToken[] {
   const seen = new Set<string>();
   const out: ImportedToken[] = [];
@@ -158,6 +169,43 @@ export async function refreshApprovedTokenMetadata(): Promise<void> {
     }),
   );
   if (changed) tokenStore.update((list) => [...list]);
+}
+
+/**
+ * Apply externally resolved metadata (Swap Read API token facts) to an
+ * approved built-in token, with the same in-place semantics as
+ * refreshApprovedTokenMetadata: empty/unknown fields keep the hardcoded
+ * fallback, decimals only change when a decoded value is given. Returns true
+ * when anything changed (the caller bumps tokenStore once for all tokens).
+ */
+export function applyApprovedTokenMetadata(
+  t: TokenInfo,
+  meta: { name?: string | null; symbol?: string | null; decimals?: number | null },
+): boolean {
+  let changed = false;
+  const name = sanitizeName(meta.name ?? "");
+  const symbol = sanitizeSymbol(meta.symbol ?? "");
+  if (name && name !== t.name) {
+    t.name = name;
+    changed = true;
+  }
+  if (symbol && symbol !== t.symbol) {
+    t.symbol = symbol;
+    changed = true;
+  }
+  if (meta.decimals !== null && meta.decimals !== undefined) {
+    const decimals = sanitizeDecimals(meta.decimals, t.decimals);
+    if (decimals !== t.decimals) {
+      t.decimals = decimals;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** Bump the token store so mounted views re-render after in-place metadata edits. */
+export function notifyTokenMetadataChanged(): void {
+  tokenStore.update((list) => [...list]);
 }
 
 /** Read a token balance (base units) for an account. Native uses provider balance. */

@@ -1,0 +1,27 @@
+{
+  "indexedBlock": 112181,
+  "primordialHead": 112181,
+  "readApiBlock": 112180,
+  "lagBlocks": 0,
+  "degraded": false,
+  "maxHops": 3,
+  "maxK": 5,
+  "dexes": [
+    {
+      "dexId": "quantumswap-beta2",
+      "name": "QuantumSwap Beta 2",
+      "factoryAddress": "0x4936ede416c82663adcb898d68ad12aad0131b0e19ae876b35e7b0d25ad7a319",
+      "routerAddress": "0x957320a8b1a3ca3fdd4ac3ab7191060cc315dff08de367f7e2962296c8aae7a4",
+      "wrappedCoinAddress": "0x761e72c47866b7ef2358d6c9770a49db7c9c4c7e23949d556f1ce798ff8e2f6e",
+      "feeBps": 30
+    },
+    {
+      "dexId": "quantumswap-preflight",
+      "name": "QuantumSwap Preflight",
+      "factoryAddress": "0x6202be3cb1646a4f9ffda104aad4cb901a7ab414a89ade12ce2151b46ad241cf",
+      "routerAddress": "0xd62870a65193504674ac9bbbc001b7d333f91e477193b7f88bfbccd8e3eea182",
+      "wrappedCoinAddress": "0x80d5866b054028aef6b8519b451bec113c07077c67aa01496e91d3d21161af50",
+      "feeBps": 30
+    }
+  ]
+}

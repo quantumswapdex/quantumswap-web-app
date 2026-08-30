@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
-    "check:naming": "node scripts/check-naming.mjs"
+    "check:naming": "node scripts/check-naming.mjs",
+    "test:e2e:devnet": "playwright test e2e/devnet.spec.ts e2e/devnet-api-down.spec.ts",
+    "fixtures:record": "node scripts/record-swap-api-fixtures.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

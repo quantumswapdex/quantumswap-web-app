@@ -4,8 +4,31 @@ import {
   sanitizeAmountString,
   sanitizeQuery,
   sanitizeSlippage,
+  sanitizeUrl,
   stripHostile,
 } from "./sanitize";
+
+describe("sanitizeUrl", () => {
+  it("accepts http(s) base URLs and normalizes them to origin + path", () => {
+    expect(sanitizeUrl("http://127.0.0.1:8182")).toBe("http://127.0.0.1:8182");
+    expect(sanitizeUrl("http://127.0.0.1:8182/")).toBe("http://127.0.0.1:8182");
+    expect(sanitizeUrl("https://api.quantumswap.com/v1/")).toBe("https://api.quantumswap.com/v1");
+    expect(sanitizeUrl("  https://Api.QuantumSwap.com ​")).toBe("https://api.quantumswap.com");
+  });
+
+  it("rejects non-http schemes, credentials, query/fragment, garbage and oversized input", () => {
+    expect(sanitizeUrl("javascript:alert(1)")).toBeNull();
+    expect(sanitizeUrl("file:///etc/passwd")).toBeNull();
+    expect(sanitizeUrl("data:text/html,hi")).toBeNull();
+    expect(sanitizeUrl("http://user:pw@host.example")).toBeNull();
+    expect(sanitizeUrl("https://host.example/?x=1")).toBeNull();
+    expect(sanitizeUrl("https://host.example/#frag")).toBeNull();
+    expect(sanitizeUrl("not a url")).toBeNull();
+    expect(sanitizeUrl("")).toBeNull();
+    expect(sanitizeUrl(42)).toBeNull();
+    expect(sanitizeUrl("https://host.example/" + "a".repeat(200))).toBeNull();
+  });
+});
 
 describe("stripHostile", () => {
   it("removes zero-width and control characters", () => {
